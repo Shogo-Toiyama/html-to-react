@@ -109,6 +109,32 @@ export async function writeLocalFile(
   await writable.close()
 }
 
+const WRITE_CONCURRENCY = 6
+
+/**
+ * Writes many files, several at a time (each write to a real disk is slow).
+ * With `skipExisting`, files that already exist are left untouched.
+ */
+export async function writeLocalFiles(
+  dir: FileSystemDirectoryHandle,
+  files: Iterable<[path: string, contents: string | Uint8Array]>,
+  { skipExisting = false, onWritten }: { skipExisting?: boolean; onWritten?: (path: string) => void } = {},
+) {
+  await runWithConcurrency([...files], WRITE_CONCURRENCY, async ([path, contents]) => {
+    if (skipExisting && (await fileExists(dir, path))) return
+    await writeLocalFile(dir, path, contents)
+    onWritten?.(path)
+  })
+}
+
+export async function runWithConcurrency<T>(items: T[], limit: number, task: (item: T) => Promise<void>) {
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) await task(items[next++])
+  })
+  await Promise.all(workers)
+}
+
 async function getFileHandle(dir: FileSystemDirectoryHandle, path: string, create: boolean) {
   const parts = path.split('/')
   const fileName = parts.pop()!

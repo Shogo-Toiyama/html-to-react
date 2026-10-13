@@ -1,0 +1,12 @@
+services:
+  - type: static
+    name: jigsaw_puzzle
+    env: static
+    buildCommand: ""
+    publishPath: "."
+    pullRequestPreviewsEnabled: true
+    routes:
+      # 将来、フロントがSPA化したら 404時に index.html へリライト
+      - type: rewrite
+        source: "/*"
+        destination: "/index.html"

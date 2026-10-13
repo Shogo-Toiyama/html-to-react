@@ -1,6 +1,10 @@
 // A minimal Vite + React (JavaScript) project, based on create-vite's
 // `react` template with the lint tooling and binary assets left out.
 
+export function createPackageJson(name: string): string {
+  return JSON.stringify({ ...packageJson, name }, null, 2) + '\n'
+}
+
 const packageJson = {
   name: 'my-react-site',
   private: true,
@@ -23,17 +27,24 @@ const packageJson = {
   },
 }
 
-export const STARTER_FILES: Record<string, string> = {
-  'package.json': JSON.stringify(packageJson, null, 2) + '\n',
-
-  'vite.config.js': `import react from '@vitejs/plugin-react'
+export const VITE_CONFIG = `import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
 })
-`,
+`
+
+export const GITIGNORE = `node_modules
+dist
+.DS_Store
+`
+
+export const STARTER_FILES: Record<string, string> = {
+  'package.json': createPackageJson('my-react-site'),
+
+  'vite.config.js': VITE_CONFIG,
 
   'index.html': `<!doctype html>
 <html lang="en">
@@ -99,8 +110,5 @@ button {
 }
 `,
 
-  '.gitignore': `node_modules
-dist
-.DS_Store
-`,
+  '.gitignore': GITIGNORE,
 }

@@ -1,5 +1,5 @@
 import type { WebContainer } from '@webcontainer/api'
-import { fileExists, readTextFile, writeLocalFile } from './localFolder'
+import { fileExists, readTextFile, runWithConcurrency, writeLocalFile } from './localFolder'
 
 // Participants edit in VS Code without Node installed, so there is no local
 // node_modules. VS Code's JS features run on TypeScript, which only needs the
@@ -43,6 +43,7 @@ export async function writeEditorConfig(dir: FileSystemDirectoryHandle): Promise
 }
 
 const WRITE_CONCURRENCY = 6
+
 // Only what TypeScript reads; skips READMEs, licenses, etc. Writing to a real
 // disk through the File System Access API is slow (about a second per file).
 const NEEDED_FILE = /(\.d\.ts|\.d\.mts|\.d\.cts|package\.json)$/
@@ -97,12 +98,4 @@ async function listFiles(wc: WebContainer, path: string): Promise<string[]> {
     }
   }
   return files
-}
-
-async function runWithConcurrency<T>(items: T[], limit: number, task: (item: T) => Promise<void>) {
-  let next = 0
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) await task(items[next++])
-  })
-  await Promise.all(workers)
 }

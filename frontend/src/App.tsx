@@ -2,19 +2,23 @@ import type { Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import { TerminalPanel } from './components/TerminalPanel'
+import { convertSite, findHtmlPages } from './converter'
 import { DevSession, type SessionPhase } from './lib/devSession'
 import {
   ensureReadWritePermission,
   fileExists,
   isFolderEmpty,
+  readBytes,
   recallFolder,
   rememberFolder,
-  writeLocalFile,
+  scanFolder,
+  writeLocalFiles,
 } from './lib/localFolder'
 import { STARTER_FILES } from './lib/starterProject'
 
 type Prompt =
   | { kind: 'empty-folder'; handle: FileSystemDirectoryHandle }
+  | { kind: 'html-site'; handle: FileSystemDirectoryHandle; pages: string[] }
   | { kind: 'not-a-project'; handle: FileSystemDirectoryHandle }
 
 const PHASE_LABELS: Record<SessionPhase, string> = {
@@ -88,7 +92,10 @@ function App() {
     } else if (await isFolderEmpty(handle)) {
       setPrompt({ kind: 'empty-folder', handle })
     } else {
-      setPrompt({ kind: 'not-a-project', handle })
+      const names: string[] = []
+      for await (const [name, entry] of handle.entries()) if (entry.kind === 'file') names.push(name)
+      const pages = findHtmlPages(names)
+      setPrompt(pages.length > 0 ? { kind: 'html-site', handle, pages } : { kind: 'not-a-project', handle })
     }
   }
 
@@ -102,35 +109,73 @@ function App() {
     }
   }
 
-  async function createStarter(handle: FileSystemDirectoryHandle) {
-    // Show progress right away: writing to a real disk takes a few seconds.
+  /** Switches to the session view right away and logs to the terminal while files are written. */
+  function beginCreating(target: FileSystemDirectoryHandle, message: string) {
     sessionRef.current?.stop()
     terminalRef.current?.clear()
     setPrompt(null)
     setNotice(null)
     setPreviewUrl(null)
     setLastSync(null)
-    setFolderName(handle.name)
+    setFolderName(target.name)
     setPhase('creating')
     const log = (text: string) => terminalRef.current?.write(text.replaceAll('\n', '\r\n'))
-    log(`\x1b[36m● Creating a starter React project in "${handle.name}"…\x1b[0m\n`)
+    log(`\x1b[36m● ${message}\x1b[0m\n`)
+    return log
+  }
 
+  async function createStarter(handle: FileSystemDirectoryHandle) {
+    const log = beginCreating(handle, `Creating a starter React project in "${handle.name}"…`)
     try {
-      await Promise.all(
-        Object.entries(STARTER_FILES).map(async ([path, contents]) => {
-          // The folder may hold hidden files (e.g. .gitignore); never overwrite them.
-          if (await fileExists(handle, path)) return
-          await writeLocalFile(handle, path, contents)
-          log(`  + ${path}\n`)
-        }),
-      )
+      // The folder may hold hidden files (e.g. .gitignore); never overwrite them.
+      await writeLocalFiles(handle, Object.entries(STARTER_FILES), {
+        skipExisting: true,
+        onWritten: (path) => log(`  + ${path}\n`),
+      })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      log(`\x1b[31m✖ Could not create files: ${message}\x1b[0m\n`)
+      log(`\x1b[31m✖ Could not create files: ${errorMessage(error)}\x1b[0m\n`)
       setPhase('error')
       return
     }
     startSession(handle, { keepTerminal: true })
+  }
+
+  async function convertToReact(source: FileSystemDirectoryHandle, entry: string) {
+    let target: FileSystemDirectoryHandle
+    try {
+      target = await window.showDirectoryPicker!({ id: 'react-output', mode: 'readwrite' })
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) setNotice(errorMessage(error))
+      return
+    }
+    if (await target.isSameEntry(source)) {
+      setNotice('That’s your original site folder. Please create or choose a different, empty folder.')
+      return
+    }
+    if (!(await isFolderEmpty(target))) {
+      setNotice(`“${target.name}” isn’t empty. Please create or choose an empty folder for the React version.`)
+      return
+    }
+
+    const log = beginCreating(target, `Converting "${source.name}/${entry}" to React in "${target.name}"…`)
+    try {
+      const snapshot = await scanFolder(source)
+      const files = new Map<string, Uint8Array>()
+      for (const [path, file] of snapshot) files.set(path, await readBytes(file))
+      const result = convertSite({ files, siteName: source.name, entry })
+      await writeLocalFiles(target, result.files, { onWritten: (path) => log(`  + ${path}\n`) })
+
+      const checks = result.notes.filter((note) => note.kind === 'check').length
+      log(`\x1b[32m✔ Converted. Open CONVERSION.md to see what changed and why.\x1b[0m\n`)
+      if (checks > 0) log(`\x1b[33m! ${checks} thing(s) to check — see “Please check” in CONVERSION.md.\x1b[0m\n`)
+    } catch (error) {
+      log(`\x1b[31m✖ Conversion failed: ${errorMessage(error)}\x1b[0m\n`)
+      setPhase('error')
+      return
+    }
+    await rememberFolder(target)
+    setRememberedFolder(target)
+    startSession(target, { keepTerminal: true })
   }
 
   const showWelcome = phase === null || phase === 'stopped'
@@ -159,6 +204,7 @@ function App() {
               onPick={pickFolder}
               onReopen={(handle) => void openFolder(handle)}
               onCreateStarter={(handle) => void createStarter(handle)}
+              onConvert={(handle, entry) => void convertToReact(handle, entry)}
               onDismissPrompt={() => setPrompt(null)}
             />
           ) : (
@@ -218,10 +264,12 @@ interface WelcomeProps {
   onPick: () => void
   onReopen: (handle: FileSystemDirectoryHandle) => void
   onCreateStarter: (handle: FileSystemDirectoryHandle) => void
+  onConvert: (handle: FileSystemDirectoryHandle, entry: string) => void
   onDismissPrompt: () => void
 }
 
-function Welcome({ prompt, notice, rememberedFolder, onPick, onReopen, onCreateStarter, onDismissPrompt }: WelcomeProps) {
+function Welcome(props: WelcomeProps) {
+  const { prompt, notice, rememberedFolder, onPick, onReopen, onCreateStarter, onConvert, onDismissPrompt } = props
   if (!browserSupported) {
     return (
       <div className="welcome">
@@ -260,13 +308,18 @@ function Welcome({ prompt, notice, rememberedFolder, onPick, onReopen, onCreateS
     )
   }
 
+  if (prompt?.kind === 'html-site') {
+    return <ConvertPrompt prompt={prompt} notice={notice} onConvert={onConvert} onCancel={onDismissPrompt} />
+  }
+
   if (prompt?.kind === 'not-a-project') {
     return (
       <div className="welcome">
-        <h1>“{prompt.handle.name}” isn’t a React project</h1>
+        <h1>Nothing to run in “{prompt.handle.name}”</h1>
         <p>
-          It has files but no <code>package.json</code>. Converting an HTML/CSS/JS site is coming soon — for now, choose
-          an empty folder or an existing React project.
+          This folder has no <code>package.json</code> (React project) and no <code>.html</code> page at its top level.
+          Choose an empty folder, an existing React project, or the folder that contains your site’s{' '}
+          <code>index.html</code>.
         </p>
         <div className="actions">
           <button type="button" className="button primary" onClick={onPick}>
@@ -283,7 +336,8 @@ function Welcome({ prompt, notice, rememberedFolder, onPick, onReopen, onCreateS
       <p>No installs needed. Your files stay on your computer.</p>
       <ol className="steps">
         <li>
-          Choose a folder: an <strong>empty folder</strong> to start a new project, or an existing React project.
+          Choose a folder: your <strong>HTML website</strong> to convert it, an <strong>empty folder</strong> to start
+          a new project, or an existing React project.
         </li>
         <li>
           Edit the files in <strong>VS Code</strong> and save.
@@ -303,6 +357,61 @@ function Welcome({ prompt, notice, rememberedFolder, onPick, onReopen, onCreateS
       </div>
     </div>
   )
+}
+
+interface ConvertPromptProps {
+  prompt: Extract<Prompt, { kind: 'html-site' }>
+  notice: string | null
+  onConvert: (handle: FileSystemDirectoryHandle, entry: string) => void
+  onCancel: () => void
+}
+
+function ConvertPrompt({ prompt, notice, onConvert, onCancel }: ConvertPromptProps) {
+  const [entry, setEntry] = useState(prompt.pages[0])
+  const name = prompt.handle.name
+  return (
+    <div className="welcome">
+      <h1>“{name}” is an HTML website</h1>
+      <p>
+        Convert it to a React project? Your original files stay exactly as they are. The React version goes into a new
+        folder.
+      </p>
+      {prompt.pages.length > 1 && (
+        <label className="field">
+          <span>Page to convert</span>
+          <select value={entry} onChange={(event) => setEntry(event.target.value)}>
+            {prompt.pages.map((page) => (
+              <option key={page} value={page}>
+                {page}
+              </option>
+            ))}
+          </select>
+          <span className="hint">This version converts one page at a time.</span>
+        </label>
+      )}
+      <ol className="steps">
+        <li>
+          Click <strong>Choose folder for React version</strong>.
+        </li>
+        <li>
+          In the dialog, create a <strong>new folder</strong> (for example “{name}-react”) and select it.
+        </li>
+      </ol>
+      {notice && <p className="notice">{notice}</p>}
+      <div className="actions">
+        <button type="button" className="button primary" onClick={() => onConvert(prompt.handle, entry)}>
+          Choose folder for React version
+        </button>
+        <button type="button" className="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function SyncBadge({ sync }: { sync: SyncInfo }) {

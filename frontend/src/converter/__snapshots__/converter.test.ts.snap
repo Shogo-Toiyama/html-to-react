@@ -1,0 +1,19 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`fixture: jigsaw > matches the expected project files 10`] = `
+[
+  "public/completed_picture.png",
+  "public/pieces/A1.png",
+  "public/pieces/A2.png",
+  "public/pieces/B1.png",
+  "public/pieces/B2.png",
+]
+`;
+
+exports[`fixture: portfolio > matches the expected project files 10`] = `
+[
+  "public/favicon.png",
+  "public/images/bg.png",
+  "public/images/profile.png",
+]
+`;

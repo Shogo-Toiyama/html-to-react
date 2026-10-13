@@ -204,6 +204,29 @@
   margin-top: 16px;
 }
 
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 16px 0;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.field select {
+  font: inherit;
+  font-weight: 400;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  max-width: 280px;
+}
+
+.field .hint {
+  font-weight: 400;
+  color: var(--muted);
+}
+
 .notice {
   color: var(--danger);
 }
