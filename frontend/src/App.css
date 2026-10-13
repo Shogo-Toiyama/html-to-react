@@ -180,6 +180,44 @@
   }
 }
 
+/* Full view: only the preview is shown. The terminal stays mounted (hidden)
+   so its output isn't lost. */
+
+.app.expanded .topbar,
+.app.expanded .preview-toolbar,
+.app.expanded .terminal-pane {
+  display: none;
+}
+
+.app.expanded .workspace {
+  grid-template-rows: minmax(0, 1fr) 0;
+}
+
+.preview-pane {
+  position: relative;
+}
+
+.exit-full-view {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  opacity: 0.85;
+}
+
+.exit-full-view:hover {
+  opacity: 1;
+}
+
+.preview-only-frame {
+  display: block;
+  width: 100vw;
+  height: 100svh;
+  border: 0;
+  background: #fff;
+}
+
 /* Welcome */
 
 .welcome {

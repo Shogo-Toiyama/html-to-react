@@ -4,6 +4,7 @@ import './App.css'
 import { TerminalPanel } from './components/TerminalPanel'
 import { convertSite, findHtmlPages } from './converter'
 import { DevSession, type SessionPhase } from './lib/devSession'
+import { previewTabUrl } from './lib/previewTab'
 import {
   ensureReadWritePermission,
   fileExists,
@@ -50,11 +51,19 @@ function App() {
   const [rememberedFolder, setRememberedFolder] = useState<FileSystemDirectoryHandle | null>(null)
   const [lastSync, setLastSync] = useState<SyncInfo | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
     void recallFolder().then(setRememberedFolder)
     return () => sessionRef.current?.stop()
   }, [])
+
+  useEffect(() => {
+    if (!expanded) return
+    const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && setExpanded(false)
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [expanded])
 
   function startSession(handle: FileSystemDirectoryHandle, { keepTerminal = false } = {}) {
     sessionRef.current?.stop()
@@ -179,9 +188,10 @@ function App() {
   }
 
   const showWelcome = phase === null || phase === 'stopped'
+  const isExpanded = expanded && previewUrl !== null && !showWelcome
 
   return (
-    <div className="app">
+    <div className={isExpanded ? 'app expanded' : 'app'}>
       <header className="topbar">
         <span className="brand">React Launchpad</span>
         {folderName && !showWelcome && <span className="folder-chip">📁 {folderName}</span>}
@@ -221,11 +231,27 @@ function App() {
                 </button>
                 <span className="preview-url">{previewUrl ?? PHASE_LABELS[phase]}</span>
                 {previewUrl && (
-                  <a className="button" href={previewUrl} target="_blank" rel="noreferrer">
-                    Open in new tab ↗
-                  </a>
+                  <>
+                    <button type="button" className="button" onClick={() => setExpanded(true)}>
+                      Full view ⤢
+                    </button>
+                    <a
+                      className="button"
+                      href={previewTabUrl(previewUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Keep this tab open: your project runs here."
+                    >
+                      Open in new tab ↗
+                    </a>
+                  </>
                 )}
               </div>
+              {isExpanded && (
+                <button type="button" className="button exit-full-view" onClick={() => setExpanded(false)}>
+                  Exit full view (Esc)
+                </button>
+              )}
               {previewUrl ? (
                 <iframe key={previewKey} className="preview-frame" src={previewUrl} title="Preview" />
               ) : (
