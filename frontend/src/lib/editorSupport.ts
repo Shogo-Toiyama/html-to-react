@@ -42,6 +42,11 @@ export async function writeEditorConfig(dir: FileSystemDirectoryHandle): Promise
   return written
 }
 
+const WRITE_CONCURRENCY = 6
+// Only what TypeScript reads; skips READMEs, licenses, etc. Writing to a real
+// disk through the File System Access API is slow (about a second per file).
+const NEEDED_FILE = /(\.d\.ts|\.d\.mts|\.d\.cts|package\.json)$/
+
 /**
  * Copies installed type packages (and their dependencies, e.g. `csstype`) from
  * the WebContainer into the local `node_modules`. Packages whose local version
@@ -69,19 +74,35 @@ export async function copyTypePackages(wc: WebContainer, dir: FileSystemDirector
     const localManifest = await readTextFile(dir, `${pkgDir}/package.json`)
     if (localManifest && JSON.parse(localManifest).version === manifest.version) continue
 
-    await copyDirectory(wc, dir, pkgDir)
+    const copyFile = async (path: string) => writeLocalFile(dir, path, await wc.fs.readFile(path))
+    const manifestPath = `${pkgDir}/package.json`
+    const files = (await listFiles(wc, pkgDir)).filter((path) => path !== manifestPath)
+    await runWithConcurrency(files, WRITE_CONCURRENCY, copyFile)
+    // Written last: its version marks the copy as complete, so an interrupted
+    // copy is retried next time.
+    await copyFile(manifestPath)
     copied.push(`${name}@${manifest.version}`)
   }
   return copied
 }
 
-async function copyDirectory(wc: WebContainer, dir: FileSystemDirectoryHandle, path: string) {
+async function listFiles(wc: WebContainer, path: string): Promise<string[]> {
+  const files: string[] = []
   for (const entry of await wc.fs.readdir(path, { withFileTypes: true })) {
     const childPath = `${path}/${entry.name}`
     if (entry.isDirectory()) {
-      await copyDirectory(wc, dir, childPath)
-    } else if (entry.isFile()) {
-      await writeLocalFile(dir, childPath, await wc.fs.readFile(childPath))
+      files.push(...(await listFiles(wc, childPath)))
+    } else if (entry.isFile() && NEEDED_FILE.test(entry.name)) {
+      files.push(childPath)
     }
   }
+  return files
+}
+
+async function runWithConcurrency<T>(items: T[], limit: number, task: (item: T) => Promise<void>) {
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) await task(items[next++])
+  })
+  await Promise.all(workers)
 }

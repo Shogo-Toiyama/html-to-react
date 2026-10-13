@@ -9,7 +9,7 @@ const POLL_INTERVAL_MS = 1000
 // ExperimentalWarning on every worker start. Hide it from participants.
 const PROCESS_ENV = { NODE_NO_WARNINGS: '1' }
 
-export type SessionPhase = 'booting' | 'mounting' | 'installing' | 'starting' | 'running' | 'error' | 'stopped'
+export type SessionPhase = 'creating' | 'booting' | 'mounting' | 'installing' | 'starting' | 'running' | 'error' | 'stopped'
 
 export interface SessionCallbacks {
   onPhase(phase: SessionPhase, detail?: string): void
@@ -100,9 +100,22 @@ export class DevSession {
       return false
     }
 
-    const copied = await copyTypePackages(wc, this.dir)
-    if (copied.length > 0) this.info(`Copied type definitions for VS Code: ${copied.join(', ')}`)
+    // Not awaited: slow disk writes must not delay the preview.
+    void this.syncEditorTypes(wc)
     return true
+  }
+
+  private async syncEditorTypes(wc: WebContainer) {
+    const startedAt = Date.now()
+    try {
+      const copied = await copyTypePackages(wc, this.dir)
+      if (copied.length > 0 && !this.stopped) {
+        const seconds = ((Date.now() - startedAt) / 1000).toFixed(1)
+        this.info(`Copied type definitions for VS Code (${seconds}s): ${copied.join(', ')}`)
+      }
+    } catch (error) {
+      this.info(`Could not copy type definitions: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   private async startDevServer() {

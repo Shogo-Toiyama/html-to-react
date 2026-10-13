@@ -1,40 +1,30 @@
+/* Theme follows the ACM Design brand (https://design.uclaacm.com):
+   warm orange primary, blue accent, Poppins / Open Sans / Source Code Pro. */
 :root {
   --bg: #ffffff;
-  --surface: #f6f6f8;
-  --border: #e4e4e9;
-  --text: #4b4b57;
-  --text-strong: #111118;
-  --muted: #8a8a96;
-  --accent: #5b5bd6;
-  --accent-contrast: #ffffff;
+  --surface: #fff7f0;
+  --border: #f0e2d6;
+  --text: #4a4038;
+  --text-strong: #242424;
+  --muted: #8a7d72;
+  --primary: #fe8d3c;
+  --primary-strong: #f97313;
+  --primary-ink: #522d14; /* text on top of the orange */
+  --gradient: linear-gradient(90deg, #f97313, #ffd260);
+  --link: #1955b3;
   --ok: #18794e;
   --warn: #ad5700;
   --danger: #cd2b31;
+  --radius: 8px;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: 'Open Sans', system-ui, 'Segoe UI', sans-serif;
+  --heading: 'Poppins', system-ui, 'Segoe UI', sans-serif;
+  --mono: 'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  font: 15px/1.5 var(--sans);
+  font: 15px/1.55 var(--sans);
   color: var(--text);
   background: var(--bg);
-  color-scheme: light dark;
   -webkit-font-smoothing: antialiased;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #111116;
-    --surface: #1a1a21;
-    --border: #2b2b35;
-    --text: #b4b4c0;
-    --text-strong: #f2f2f5;
-    --muted: #7c7c88;
-    --accent: #8b8bf0;
-    --accent-contrast: #111116;
-    --ok: #4cc38a;
-    --warn: #f1a10d;
-    --danger: #ff6369;
-  }
 }
 
 * {
@@ -47,8 +37,9 @@ body {
 }
 
 h1 {
+  font-family: var(--heading);
   color: var(--text-strong);
-  font-size: 24px;
+  font-size: 26px;
   line-height: 1.25;
   font-weight: 600;
   margin: 0 0 8px;
@@ -58,6 +49,10 @@ p {
   margin: 0 0 12px;
 }
 
+a {
+  color: var(--link);
+}
+
 code {
   font-family: var(--mono);
   font-size: 0.9em;
@@ -65,4 +60,9 @@ code {
   border-radius: 4px;
   background: var(--surface);
   border: 1px solid var(--border);
+}
+
+:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
 }

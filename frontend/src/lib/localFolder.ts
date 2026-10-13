@@ -72,9 +72,10 @@ export async function snapshotToTree(snapshot: FolderSnapshot): Promise<FileSyst
   return root
 }
 
+/** True when the folder has nothing a participant would see (hidden `.` entries don't count). */
 export async function isFolderEmpty(dir: FileSystemDirectoryHandle): Promise<boolean> {
   for await (const name of dir.keys()) {
-    if (name !== '.DS_Store' && name !== 'Thumbs.db') return false
+    if (!name.startsWith('.') && name !== 'Thumbs.db') return false
   }
   return true
 }

@@ -18,6 +18,7 @@ type Prompt =
   | { kind: 'not-a-project'; handle: FileSystemDirectoryHandle }
 
 const PHASE_LABELS: Record<SessionPhase, string> = {
+  creating: 'Creating project files…',
   booting: 'Starting Node.js…',
   mounting: 'Loading files…',
   installing: 'Installing packages…',
@@ -51,9 +52,9 @@ function App() {
     return () => sessionRef.current?.stop()
   }, [])
 
-  function startSession(handle: FileSystemDirectoryHandle) {
+  function startSession(handle: FileSystemDirectoryHandle, { keepTerminal = false } = {}) {
     sessionRef.current?.stop()
-    terminalRef.current?.clear()
+    if (!keepTerminal) terminalRef.current?.clear()
     setPrompt(null)
     setNotice(null)
     setPreviewUrl(null)
@@ -102,10 +103,34 @@ function App() {
   }
 
   async function createStarter(handle: FileSystemDirectoryHandle) {
-    for (const [path, contents] of Object.entries(STARTER_FILES)) {
-      await writeLocalFile(handle, path, contents)
+    // Show progress right away: writing to a real disk takes a few seconds.
+    sessionRef.current?.stop()
+    terminalRef.current?.clear()
+    setPrompt(null)
+    setNotice(null)
+    setPreviewUrl(null)
+    setLastSync(null)
+    setFolderName(handle.name)
+    setPhase('creating')
+    const log = (text: string) => terminalRef.current?.write(text.replaceAll('\n', '\r\n'))
+    log(`\x1b[36m● Creating a starter React project in "${handle.name}"…\x1b[0m\n`)
+
+    try {
+      await Promise.all(
+        Object.entries(STARTER_FILES).map(async ([path, contents]) => {
+          // The folder may hold hidden files (e.g. .gitignore); never overwrite them.
+          if (await fileExists(handle, path)) return
+          await writeLocalFile(handle, path, contents)
+          log(`  + ${path}\n`)
+        }),
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log(`\x1b[31m✖ Could not create files: ${message}\x1b[0m\n`)
+      setPhase('error')
+      return
     }
-    startSession(handle)
+    startSession(handle, { keepTerminal: true })
   }
 
   const showWelcome = phase === null || phase === 'stopped'
