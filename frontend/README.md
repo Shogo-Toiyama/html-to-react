@@ -42,6 +42,22 @@ Every change is explained for participants in the generated `CONVERSION.md`.
 
 Not supported yet: `<script type="module">`.
 
+## AI backend (Cloudflare Pages Functions)
+
+`functions/api/suggest.ts` (logic in `server/`) asks Claude Sonnet 5.5 to split a page into components (Step 2) or to merge repeated parts into one component with props (Step 3). The answer is structured JSON (files + a change log), checked in `server/validate.ts` (JSX parses; no `id`, `className` or `window.*` call lost; imports exist) and sent back to Claude once if it fails. Progress streams to the browser as NDJSON. In the side panel, **Apply** writes the files (old versions backed up to `.launchpad/backups/`), **Undo** restores them, and every change is logged in `.launchpad/history.json` (and localStorage). The preview's **🧩 Components** toggle outlines the component under the mouse with its props (no AI).
+
+Cloudflare Pages → Settings → Variables and Secrets:
+
+| Name | |
+|---|---|
+| `ANTHROPIC_API_KEY` | Secret |
+| `WORKSHOP_CODE` | Code participants type once (e.g. `buildwithai`) |
+| `RATE_LIMIT_KV` | Optional KV binding: 20 requests / 10 min per device (the room shares one IP, so limits use a random id stored in the browser) |
+
+Requests over `MAX_REQUEST_CHARS` (150 KB of code, `src/lib/aiApi.ts`) are not sent: the panel shows a warning with the largest files instead of trimming anything.
+
+Local: copy `.dev.vars.example` to `.dev.vars`, then `npm run dev:pages` (builds and serves `dist` with the functions). Plain `npm run dev` has no `/api`.
+
 ## Tests
 
 ```sh

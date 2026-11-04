@@ -114,7 +114,46 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) 0 var(--guide-width, 380px);
+}
+
+/* Draggable border between preview and side panel. Zero-width column; the
+   handle overhangs it so it's easy to grab. */
+.resize-handle {
+  position: relative;
+  z-index: 2;
+  width: 10px;
+  margin-left: -5px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  inset: 0 4px;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.resize-handle:hover::after,
+.resize-handle:focus-visible::after,
+.app.resizing .resize-handle::after {
+  background: var(--primary);
+}
+
+.resize-handle:focus-visible {
+  outline: none;
+}
+
+/* While dragging, the preview iframe would swallow the pointer. */
+.app.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.app.resizing iframe {
+  pointer-events: none;
 }
 
 .main-column {
@@ -239,6 +278,7 @@
 .app.expanded .topbar,
 .app.expanded .preview-toolbar,
 .app.expanded .terminal-pane,
+.app.expanded .resize-handle,
 .app.expanded .guide {
   display: none;
 }
@@ -575,4 +615,123 @@
 .button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.button.pressed {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-ink);
+  font-weight: 600;
+}
+
+/* "Ask AI" box in the Components / Props steps */
+
+.ai-box {
+  margin-top: 20px;
+  padding: 12px 14px;
+  border: 1px solid #d9c8ff;
+  border-radius: var(--radius);
+  background: #faf7ff;
+}
+
+.ai-box h3 {
+  margin-top: 0;
+}
+
+.ai-box h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  color: var(--text-strong);
+}
+
+.ai-code {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.ai-code label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.ai-code input {
+  font: inherit;
+  font-weight: 400;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.ai-working {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.spinner.small {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border-width: 2px;
+  flex-shrink: 0;
+}
+
+.ai-components,
+.ai-changes {
+  list-style: none;
+  padding: 0 !important;
+}
+
+.ai-components li,
+.ai-changes li {
+  padding: 6px 0;
+  border-bottom: 1px solid #ece4ff;
+}
+
+.ai-props {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ai-file {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.ai-tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e7f6ec;
+  color: var(--ok);
+}
+
+.ai-tag.modified {
+  background: #fff1e0;
+  color: var(--warn);
+}
+
+.ai-history {
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.ai-history summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.notice-box {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: #fff1f0;
+  border: 1px solid #f5c2c0;
 }

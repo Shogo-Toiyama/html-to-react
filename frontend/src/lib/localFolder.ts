@@ -133,6 +133,14 @@ export async function writeLocalFile(
   await writable.close()
 }
 
+export async function deleteLocalFile(dir: FileSystemDirectoryHandle, path: string) {
+  const parts = path.split('/')
+  const fileName = parts.pop()!
+  let current = dir
+  for (const part of parts) current = await current.getDirectoryHandle(part)
+  await current.removeEntry(fileName)
+}
+
 const WRITE_CONCURRENCY = 6
 
 /**

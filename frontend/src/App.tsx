@@ -1,14 +1,16 @@
 import type { Terminal } from '@xterm/xterm'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import './App.css'
 import { GuidePanel } from './components/GuidePanel'
 import { PreviewPane } from './components/PreviewPane'
+import { ResizeHandle } from './components/ResizeHandle'
 import { TerminalDrawer } from './components/TerminalDrawer'
 import { browserSupported, Welcome, type ConvertTarget, type Prompt } from './components/Welcome'
 import { convertSite, findHtmlPages, type ConversionResult } from './converter'
 import type { ConversionSummary, StepContext } from './curriculum/StepContent'
 import { DEFAULT_POSITION, findWorkshop } from './curriculum/workshops'
 import { DevSession, type SessionPhase } from './lib/devSession'
+import { useGuideWidth } from './lib/guideWidth'
 import {
   containsFolder,
   createNewFolder,
@@ -69,6 +71,8 @@ function App() {
   const [terminalOpen, setTerminalOpen] = useState(false)
   const [progress, setProgress] = useState<Progress>(INITIAL_PROGRESS)
   const [conversion, setConversion] = useState<ConversionSummary | null>(null)
+  const [guideWidth, setGuideWidth] = useGuideWidth()
+  const [resizing, setResizing] = useState(false)
   /** Folder name shown while files are being created (before the project runs). */
   const [creatingIn, setCreatingIn] = useState<string | null>(null)
 
@@ -333,12 +337,15 @@ function App() {
   const isExpanded = expanded && previewUrl !== null && !showWelcome
   const folderName = project?.dir.name ?? creatingIn
   const stepContext: StepContext = {
-    project: project && !showWelcome ? { name: project.dir.name, mainFile: project.mainFile } : null,
+    project: project && !showWelcome ? { dir: project.dir, name: project.dir.name, mainFile: project.mainFile } : null,
     conversion,
   }
 
   return (
-    <div className={isExpanded ? 'app expanded' : 'app'}>
+    <div
+      className={`app${isExpanded ? ' expanded' : ''}${resizing ? ' resizing' : ''}`}
+      style={{ '--guide-width': `${guideWidth}px` } as CSSProperties}
+    >
       <header className="topbar">
         <span className="brand">React Launchpad</span>
         {folderName && !showWelcome && <span className="folder-chip">📁 {folderName}</span>}
@@ -395,6 +402,7 @@ function App() {
           />
         </div>
 
+        <ResizeHandle width={guideWidth} onResize={setGuideWidth} onDragging={setResizing} />
         <GuidePanel
           progress={progress}
           ctx={stepContext}

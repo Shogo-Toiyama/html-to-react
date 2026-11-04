@@ -1,6 +1,7 @@
 // Instructions shown in the side panel for each workshop step.
 
 import type { ReactNode } from 'react'
+import { AiSuggest } from '../components/AiSuggest'
 
 export interface ConversionSummary {
   pages: number
@@ -13,6 +14,7 @@ export interface ConversionSummary {
 export interface StepContext {
   /** The running React project, if any. */
   project: {
+    dir: FileSystemDirectoryHandle
     name: string
     /** The file with the main page's JSX, e.g. `src/pages/HomePage.jsx` or `src/App.jsx`. */
     mainFile: string | null
@@ -178,6 +180,10 @@ function ComponentsStep(ctx: StepContext) {
         tag: <code>&lt;Footer /&gt;</code>. Your page is already one: look at the function in{' '}
         <code>{mainFile(ctx)}</code>.
       </p>
+      <p>
+        Turn on <strong>🧩 Components</strong> above the preview and move your mouse over the page to see which
+        component draws each part.
+      </p>
       <h3>Make your first component</h3>
       <ol>
         <li>
@@ -204,11 +210,12 @@ export default Footer`}</Code>
         Keep the <code>id</code>s and <code>onClick</code>s when you move JSX: your original JavaScript still looks for
         them.
       </p>
+      {ctx.project && <AiSuggest key={ctx.project.dir.name} dir={ctx.project.dir} step="components" />}
     </>
   )
 }
 
-function PropsStep() {
+function PropsStep(ctx: StepContext) {
   return (
     <>
       <p>
@@ -236,6 +243,7 @@ function PropsStep() {
           <code>{'count={3}'}</code>.
         </li>
       </ol>
+      {ctx.project && <AiSuggest key={ctx.project.dir.name} dir={ctx.project.dir} step="props" />}
     </>
   )
 }

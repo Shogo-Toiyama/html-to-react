@@ -28,17 +28,28 @@ export function PreviewPane(props: PreviewPaneProps) {
   const [draft, setDraft] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const [frameKey, setFrameKey] = useState(0)
+  const [inspect, setInspect] = useState(false)
   const onEscapeRef = useRef(onEscape)
+  const inspectRef = useRef(inspect)
   useEffect(() => {
     onEscapeRef.current = onEscape
+    inspectRef.current = inspect
   })
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frameRef.current?.contentWindow || !isPreviewMessage(event.data)) return
       setConnected(true)
-      if (event.data.type === 'location') setPath(event.data.path)
-      else if (event.data.type === 'escape') onEscapeRef.current()
+      if (event.data.type === 'location') {
+        setPath(event.data.path)
+        // A reloaded page starts with the inspector off; turn it back on.
+        if (inspectRef.current) {
+          const message: HostMessage = { source: 'launchpad-host', type: 'inspect', enabled: true }
+          ;(event.source as Window).postMessage(message, event.origin)
+        }
+      } else if (event.data.type === 'escape') {
+        onEscapeRef.current()
+      }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
@@ -49,6 +60,12 @@ export function PreviewPane(props: PreviewPaneProps) {
     const message: HostMessage = { source: 'launchpad-host', ...command }
     frameRef.current?.contentWindow?.postMessage(message, new URL(previewUrl).origin)
   }
+
+  useEffect(() => {
+    if (!connected || !previewUrl) return
+    const message: HostMessage = { source: 'launchpad-host', type: 'inspect', enabled: inspect }
+    frameRef.current?.contentWindow?.postMessage(message, new URL(previewUrl).origin)
+  }, [inspect, connected, previewUrl])
 
   const reload = () => {
     // Without the bridge (e.g. a project that doesn't use Vite), reloading the iframe is all we can do.
@@ -111,6 +128,16 @@ export function PreviewPane(props: PreviewPaneProps) {
         </form>
         {previewUrl && fullUrl && (
           <>
+            <button
+              type="button"
+              className={inspect ? 'button pressed' : 'button'}
+              aria-pressed={inspect}
+              disabled={!connected}
+              title="Hover over the page to see which component draws each part"
+              onClick={() => setInspect((on) => !on)}
+            >
+              🧩 Components
+            </button>
             <button type="button" className="button" onClick={onFullView}>
               Full view ⤢
             </button>

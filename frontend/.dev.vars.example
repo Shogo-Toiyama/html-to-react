@@ -1,0 +1,3 @@
+# Copy to .dev.vars for `npm run dev:pages` (never commit .dev.vars).
+ANTHROPIC_API_KEY=sk-ant-...
+WORKSHOP_CODE=buildwithai
