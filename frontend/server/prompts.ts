@@ -24,7 +24,9 @@ const STEP_RULES: Record<AiStep, string> = {
 - Name components after what they are on the page (IntroSection, ProjectsSection, SiteFooter, ProjectPopups) so a beginner can tell which part each one is.
 - Do NOT merge repeated parts into one component with props yet; that is the next step of the workshop. If a section has three similar cards, keep all three exactly as written inside that section's component.
 - Don't use props in this step.
-- The page file keeps its function and now mostly renders the new component tags, in the original order.`,
+- The page file keeps its function and now mostly renders the new component tags, in the original order.
+- Leave a page alone if it is too small to split usefully (a heading and a link), or if it is already split into components (it mostly renders component tags). Don't split existing components further.
+- If no page needs splitting, return no files and no components. In the summary, say the pages are already split (or too small to split) and that they can move on to the next step (Props). Don't claim the site has parts that need props; that step checks it.`,
   props: `This step: find parts that repeat with the same structure but different content (cards, list items, popups) and turn each pattern into one component that takes props.
 - Make one component per repeated pattern, with a prop for each thing that differs (title, description, popupId...). Use clear camelCase prop names.
 - Use the component once per copy: <ProjectCard title="AI Modeling" description="..." popupId="project-details-1" />. Pass strings as attributes; pass other values with { }.

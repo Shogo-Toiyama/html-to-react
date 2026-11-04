@@ -110,20 +110,47 @@ export function AiSuggest({ dir, step }: { dir: FileSystemDirectoryHandle; step:
   }
 
   const pastForStep = history.filter((entry) => entry.step === step)
+  /** The latest suggestion applied in this step and not undone. */
+  const lastApplied = pastForStep.findLast((entry) => !entry.undoneAt)
 
   return (
     <section className="ai-box">
       <h3>✨ {copy.title}</h3>
 
-      {(state.kind === 'idle' || state.kind === 'error') && (
-        <>
-          <p>{copy.intro} You can review it before anything changes.</p>
-          {state.kind === 'error' && <p className="notice">{state.message}</p>}
-          <button type="button" className="button primary" onClick={() => void start()}>
-            {copy.button}
-          </button>
-        </>
-      )}
+      {(state.kind === 'idle' || state.kind === 'error') &&
+        (lastApplied ? (
+          // Already done for this step (e.g. after reloading Launchpad): don't invite a second split.
+          <>
+            <p>
+              ✓ You applied an AI suggestion here on {new Date(lastApplied.appliedAt).toLocaleString()}. It changed:
+            </p>
+            <ul className="ai-changes">
+              {lastApplied.changes.map((change) => (
+                <li key={change.path}>
+                  <span className={`ai-tag ${change.action}`}>{change.action === 'created' ? 'new' : 'changed'}</span>{' '}
+                  <code>{change.path}</code>
+                </li>
+              ))}
+            </ul>
+            {state.kind === 'error' && <p className="notice">{state.message}</p>}
+            <div className="actions">
+              <button type="button" className="button" onClick={() => void undo(lastApplied)}>
+                Undo
+              </button>
+              <button type="button" className="button" onClick={() => void start()}>
+                Suggest again
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p>{copy.intro} You can review it before anything changes.</p>
+            {state.kind === 'error' && <p className="notice">{state.message}</p>}
+            <button type="button" className="button primary" onClick={() => void start()}>
+              {copy.button}
+            </button>
+          </>
+        ))}
 
       {state.kind === 'code' && (
         <form
@@ -196,7 +223,13 @@ export function AiSuggest({ dir, step }: { dir: FileSystemDirectoryHandle; step:
               </ul>
             </>
           )}
-          <h4>Files</h4>
+          {state.suggestion.files.length === 0 ? (
+            <p>
+              <strong>No changes needed.</strong> Nothing in your files will change.
+            </p>
+          ) : (
+            <h4>Files</h4>
+          )}
           <ul className="ai-changes">
             {state.suggestion.changes.map((change) => (
               <li key={change.path}>
@@ -227,10 +260,15 @@ export function AiSuggest({ dir, step }: { dir: FileSystemDirectoryHandle; step:
 
       {state.kind === 'applied' && (
         <div className="ai-review">
-          <p>
-            ✓ Applied. Your files changed in VS Code and the preview updated. Open the files listed above to see the
-            components.
-          </p>
+          <p>✓ Applied. The preview updated. Open these files in VS Code to see what changed:</p>
+          <ul className="ai-changes">
+            {state.entry.changes.map((change) => (
+              <li key={change.path}>
+                <span className={`ai-tag ${change.action}`}>{change.action === 'created' ? 'new' : 'changed'}</span>{' '}
+                <code>{change.path}</code>
+              </li>
+            ))}
+          </ul>
           <div className="actions">
             <button type="button" className="button" onClick={() => void undo(state.entry)}>
               Undo

@@ -210,7 +210,7 @@ export default Footer`}</Code>
         Keep the <code>id</code>s and <code>onClick</code>s when you move JSX: your original JavaScript still looks for
         them.
       </p>
-      {ctx.project && <AiSuggest key={ctx.project.dir.name} dir={ctx.project.dir} step="components" />}
+      {ctx.project && <AiSuggest key={`${ctx.project.dir.name}/components`} dir={ctx.project.dir} step="components" />}
     </>
   )
 }
@@ -243,7 +243,7 @@ function PropsStep(ctx: StepContext) {
           <code>{'count={3}'}</code>.
         </li>
       </ol>
-      {ctx.project && <AiSuggest key={ctx.project.dir.name} dir={ctx.project.dir} step="props" />}
+      {ctx.project && <AiSuggest key={`${ctx.project.dir.name}/props`} dir={ctx.project.dir} step="props" />}
     </>
   )
 }
