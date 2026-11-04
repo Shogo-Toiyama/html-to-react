@@ -12,7 +12,10 @@ Rules that always apply:
 - Write plain JavaScript JSX (.jsx): function components with PascalCase names, \`export default\` for the main component of each file, relative imports that include the .jsx extension.
 - Keep JSX comments, the page file's existing imports, and its useEffect lines.
 - Return every file you create or change in full (not a diff). Don't return files you didn't change.
-- Write the summary, component descriptions and change descriptions for beginners: plain English, one or two short sentences each.`
+- Write the summary, component descriptions and change descriptions for beginners: plain English, one or two short sentences each.
+- The components are listed separately on screen, so the summary must not count or list them; say what you did and what stayed the same.
+- Every component tag you use (<Link>, <IntroSection>...) must be imported in that file or defined in it. Links between pages use <Link> from 'react-router'.
+- When JSX moves to another file, move the imports it needs with it, and remove imports a file no longer uses (for example <Link> after the link moved into a component).`
 
 const STEP_RULES: Record<AiStep, string> = {
   components: `This step: split each editable page into components.

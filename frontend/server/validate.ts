@@ -35,6 +35,20 @@ export function validateSuggestion(request: SuggestRequest, suggestion: Suggesti
     }
   }
 
+  // ---- Every <Component> tag is imported or defined in its file (else: "X is not defined" at runtime) ----
+  for (const file of suggestion.files) {
+    const known = new Set([
+      ...matches(file.content, /\bimport\s+([A-Z]\w*)/g),
+      ...[...file.content.matchAll(/\bimport\s*(?:\w+\s*,\s*)?\{([^}]*)\}/g)].flatMap((m) =>
+        m[1].split(',').map((part) => part.trim().split(/\s+as\s+/).pop()!.trim()),
+      ),
+      ...matches(file.content, /\b(?:function|const|let|class)\s+([A-Z]\w*)/g),
+    ])
+    for (const tag of matches(file.content, /<([A-Z]\w*)[\s/>]/g)) {
+      if (!known.has(tag)) errors.push(`${file.path} uses <${tag}> but doesn't import or define it.`)
+    }
+  }
+
   // ---- Nothing the legacy script needs may disappear ----
   const final = finalProject(request, suggestion)
   const allCode = [...final.values()].join('\n')
