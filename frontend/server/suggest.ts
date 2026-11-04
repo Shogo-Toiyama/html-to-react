@@ -18,10 +18,51 @@ export type SuggestEvent =
 
 export class SuggestError extends Error {}
 
+/** Tokens and cost of one /api/suggest call, summed over its attempts (for the logs). */
+export interface SuggestUsage {
+  attempts: number
+  /** Models that answered (a fallback model may appear after a decline). */
+  models: string[]
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  costUsd: number
+}
+
+/** USD per million tokens [input, output]. Cache reads cost 0.1x input, cache writes 1.25x. */
+const PRICES: Record<string, [number, number]> = {
+  'claude-sonnet-5-5': [2, 10],
+  'claude-sonnet-5': [2, 10],
+  'claude-haiku-5-5': [0.1, 0.5],
+}
+
+export function emptyUsage(): SuggestUsage {
+  return { attempts: 0, models: [], inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 }
+}
+
+function addUsage(total: SuggestUsage, message: Anthropic.Beta.BetaMessage) {
+  const u = message.usage
+  const cacheRead = u.cache_read_input_tokens ?? 0
+  const cacheWrite = u.cache_creation_input_tokens ?? 0
+  const [inPrice, outPrice] = PRICES[message.model] ?? PRICES[CODE_MODEL]
+  total.attempts += 1
+  if (!total.models.includes(message.model)) total.models.push(message.model)
+  total.inputTokens += u.input_tokens
+  total.outputTokens += u.output_tokens
+  total.cacheReadTokens += cacheRead
+  total.cacheWriteTokens += cacheWrite
+  total.costUsd +=
+    (u.input_tokens * inPrice + cacheRead * inPrice * 0.1 + cacheWrite * inPrice * 1.25 + u.output_tokens * outPrice) /
+    1_000_000
+}
+
+/** `usage` is filled in as attempts finish, so it is complete even when this throws. */
 export async function suggest(
   apiKey: string,
   request: SuggestRequest,
   emit: (event: SuggestEvent) => void,
+  usage: SuggestUsage,
 ): Promise<Suggestion> {
   const client = new Anthropic({ apiKey })
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content: userPrompt(request) }]
@@ -48,6 +89,7 @@ export async function suggest(
       }
     })
     const message = await stream.finalMessage()
+    addUsage(usage, message)
 
     if (message.stop_reason === 'refusal') throw new SuggestError('Claude declined this request.')
     if (message.stop_reason === 'max_tokens') throw new SuggestError('The answer was too long. Try a smaller page.')

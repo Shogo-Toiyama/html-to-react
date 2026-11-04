@@ -18,7 +18,7 @@ import {
   type SuggestRequest,
 } from '../../src/lib/aiApi'
 import { allowRequest } from '../../server/rateLimit'
-import { CODE_MODEL, suggest, SuggestError, type SuggestEvent } from '../../server/suggest'
+import { CODE_MODEL, emptyUsage, suggest, SuggestError, type SuggestEvent } from '../../server/suggest'
 
 interface Env {
   ANTHROPIC_API_KEY?: string
@@ -59,16 +59,33 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const encoder = new TextEncoder()
   const emit = (event: SuggestEvent) => void writer.write(encoder.encode(JSON.stringify(event) + '\n'))
 
+  const startedAt = Date.now()
+  const usage = emptyUsage()
+  let outcome = 'ok'
   const work = (async () => {
     try {
-      const suggestion = await suggest(env.ANTHROPIC_API_KEY!, body, emit)
+      const suggestion = await suggest(env.ANTHROPIC_API_KEY!, body, emit, usage)
       emit({ type: 'result', suggestion, model: CODE_MODEL })
     } catch (error) {
+      outcome = error instanceof SuggestError ? 'rejected' : 'error'
       const message =
         error instanceof SuggestError ? error.message : 'Claude couldn’t finish this time. Please try again in a moment.'
       if (!(error instanceof SuggestError)) console.error('suggest failed', error)
       emit({ type: 'error', code: 'ai-failed', error: message })
     } finally {
+      // One line per call, for cost tracking: Cloudflare dashboard → Logs, or `wrangler pages deployment tail`.
+      console.log(
+        JSON.stringify({
+          event: 'suggest',
+          outcome,
+          step: body.step,
+          device: deviceId.slice(0, 8),
+          requestChars: size,
+          seconds: Math.round((Date.now() - startedAt) / 1000),
+          ...usage,
+          costUsd: Math.round(usage.costUsd * 10000) / 10000,
+        }),
+      )
       await writer.close()
     }
   })()

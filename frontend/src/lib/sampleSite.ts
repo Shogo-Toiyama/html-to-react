@@ -1,7 +1,8 @@
 // The workshop's sample website (src/samples/acm-design), for participants
 // who don't have their own site or missed the first steps.
 
-export const SAMPLE_SITE_NAME = 'ACMDesign'
+/** Folder name for the saved sample (its React version becomes "MySampleWebsite - React"). */
+export const SAMPLE_SITE_NAME = 'MySampleWebsite'
 
 const PREFIX = '../samples/acm-design/'
 
