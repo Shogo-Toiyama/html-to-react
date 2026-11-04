@@ -7,6 +7,9 @@ A browser app that runs a workshop participant's local React project without ins
 - Participants keep editing in VS Code. The app polls the folder every second and copies changes into the container, so Vite's HMR updates the preview.
 - An empty folder can be turned into a starter Vite + React (JavaScript) project.
 - A plain HTML/CSS/JS site can be converted into a React project in a new folder (the original is never changed).
+- A side panel walks through the workshop steps (Workshop 4: JSX → Components → Props → Tailwind CSS). Steps are never locked; **Next** marks a step done. The position is saved in the project's `.launchpad/progress.json` (and localStorage), so a participant can resume on another computer or in the next workshop by reopening the project.
+- **Use the sample site** saves the bundled sample (`src/samples/acm-design`) into a folder the participant picks, next to its converted `- React` version.
+- The preview's address bar shows `📁 <folder> /path` instead of the real WebContainer URL. A bridge script in the preview reports the current path and lets the toolbar navigate (back, forward, reload keeps the page, type a path). It is injected by a Vite config that wraps the project's own config, written only inside the container (`.launchpad-runtime/`).
 
 ## HTML → React converter
 
@@ -77,6 +80,15 @@ WebContainer API is free for open-source, personal and non-commercial use. Comme
 
 | File | Purpose |
 |---|---|
+| `src/curriculum/workshops.ts` | Workshops and steps as data (add a workshop here) |
+| `src/curriculum/StepContent.tsx` | Instructions shown for each step |
+| `src/components/GuidePanel.tsx` | Side panel: workshop, step list, instructions, Back / Next |
+| `src/components/PreviewPane.tsx` | Address bar and preview iframe |
+| `src/components/TerminalDrawer.tsx` | Foldable terminal (opens by itself on errors) |
+| `src/components/Welcome.tsx` | Screens before a project runs (open folder, convert, sample site) |
+| `src/lib/previewBridge.ts` | Script injected into the preview + the wrapping Vite config |
+| `src/lib/progress.ts` | Reads/writes `.launchpad/progress.json` |
+| `src/lib/sampleSite.ts` | The bundled sample website |
 | `src/lib/devSession.ts` | Mount → install → dev server, plus the local-to-container sync loop |
 | `src/lib/localFolder.ts` | Folder scanning, diffing, reading/writing local files, remembering the last folder |
 | `src/lib/editorSupport.ts` | VS Code config and type definitions written to the local folder |

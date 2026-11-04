@@ -1,6 +1,7 @@
 import type { WebContainer, WebContainerProcess } from '@webcontainer/api'
 import { copyTypePackages, writeEditorConfig } from './editorSupport'
 import { diffSnapshots, readBytes, scanFolder, snapshotToTree, type FolderSnapshot } from './localFolder'
+import { RUNTIME_CONFIG, RUNTIME_FILES } from './previewBridge'
 import { clearWorkdir, getWebContainer } from './webcontainer'
 
 const POLL_INTERVAL_MS = 1000
@@ -122,8 +123,14 @@ export class DevSession {
     const wc = this.wc!
     this.cb.onPhase('starting')
     this.command('npm run dev')
+    // The preview bridge config wraps the project's own vite.config.js (see previewBridge.ts).
+    for (const [path, contents] of Object.entries(RUNTIME_FILES)) {
+      await wc.fs.mkdir(path.slice(0, path.lastIndexOf('/')), { recursive: true })
+      await wc.fs.writeFile(path, contents)
+    }
     // Keep Vite from clearing the terminal so the install log stays visible.
-    const process = await wc.spawn('npm', ['run', 'dev', '--', '--clearScreen', 'false'], {
+    const args = ['run', 'dev', '--', '--config', RUNTIME_CONFIG, '--clearScreen', 'false']
+    const process = await wc.spawn('npm', args, {
       terminal: this.terminalSize(),
       env: PROCESS_ENV,
     })

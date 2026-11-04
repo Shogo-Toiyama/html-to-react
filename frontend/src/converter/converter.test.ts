@@ -9,9 +9,11 @@ import { describePages, findSitePages } from './pages'
 import { resolveUrl } from './paths'
 
 const FIXTURES = join(import.meta.dirname, '__fixtures__')
+/** Sample sites bundled with Launchpad double as fixtures. */
+const SAMPLES = join(import.meta.dirname, '..', 'samples')
 
 function loadFixture(name: string): Map<string, Uint8Array> {
-  const root = join(FIXTURES, name)
+  const root = name === 'acm-design' ? join(SAMPLES, name) : join(FIXTURES, name)
   const files = new Map<string, Uint8Array>()
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {

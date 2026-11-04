@@ -16,6 +16,7 @@
   },
   "ignorePatterns": [
     "src/converter/__fixtures__/**",
-    "src/converter/__snapshots__/**"
+    "src/converter/__snapshots__/**",
+    "src/samples/**"
   ]
 }

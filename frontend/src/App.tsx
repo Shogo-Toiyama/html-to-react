@@ -1,10 +1,14 @@
 import type { Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
-import { TerminalPanel } from './components/TerminalPanel'
-import { convertSite, findHtmlPages } from './converter'
+import { GuidePanel } from './components/GuidePanel'
+import { PreviewPane } from './components/PreviewPane'
+import { TerminalDrawer } from './components/TerminalDrawer'
+import { browserSupported, Welcome, type ConvertTarget, type Prompt } from './components/Welcome'
+import { convertSite, findHtmlPages, type ConversionResult } from './converter'
+import type { ConversionSummary, StepContext } from './curriculum/StepContent'
+import { DEFAULT_POSITION, findWorkshop } from './curriculum/workshops'
 import { DevSession, type SessionPhase } from './lib/devSession'
-import { previewTabUrl } from './lib/previewTab'
 import {
   containsFolder,
   createNewFolder,
@@ -17,15 +21,9 @@ import {
   scanFolder,
   writeLocalFiles,
 } from './lib/localFolder'
+import { loadLocalProgress, readProgress, saveLocalProgress, stepKey, writeProgress, type Progress } from './lib/progress'
+import { loadSampleSite, SAMPLE_SITE_NAME } from './lib/sampleSite'
 import { STARTER_FILES } from './lib/starterProject'
-
-type Prompt =
-  | { kind: 'empty-folder'; handle: FileSystemDirectoryHandle }
-  | { kind: 'html-site'; handle: FileSystemDirectoryHandle; pages: string[] }
-  | { kind: 'not-a-project'; handle: FileSystemDirectoryHandle }
-
-/** Where the converted project goes: a new folder next to the site, or a folder the participant picks. */
-type ConvertTarget = 'new-folder' | 'choose-folder'
 
 const PHASE_LABELS: Record<SessionPhase, string> = {
   creating: 'Creating project files…',
@@ -43,20 +41,36 @@ interface SyncInfo {
   at: number
 }
 
-const browserSupported = typeof window.showDirectoryPicker === 'function'
+interface Project {
+  dir: FileSystemDirectoryHandle
+  mainFile: string | null
+}
+
+/** A saved position is only used if that workshop and step still exist. */
+function validProgress(progress: Progress | null): Progress | null {
+  if (!progress) return null
+  const workshop = findWorkshop(progress.workshop)
+  return workshop?.steps.some((step) => step.id === progress.step) ? progress : null
+}
+
+const INITIAL_PROGRESS: Progress = validProgress(loadLocalProgress()) ?? { ...DEFAULT_POSITION, completed: [] }
 
 function App() {
   const terminalRef = useRef<Terminal | null>(null)
   const sessionRef = useRef<DevSession | null>(null)
-  const [folderName, setFolderName] = useState<string | null>(null)
+  const [project, setProject] = useState<Project | null>(null)
   const [phase, setPhase] = useState<SessionPhase | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [previewKey, setPreviewKey] = useState(0)
   const [prompt, setPrompt] = useState<Prompt | null>(null)
   const [rememberedFolder, setRememberedFolder] = useState<FileSystemDirectoryHandle | null>(null)
   const [lastSync, setLastSync] = useState<SyncInfo | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [terminalOpen, setTerminalOpen] = useState(false)
+  const [progress, setProgress] = useState<Progress>(INITIAL_PROGRESS)
+  const [conversion, setConversion] = useState<ConversionSummary | null>(null)
+  /** Folder name shown while files are being created (before the project runs). */
+  const [creatingIn, setCreatingIn] = useState<string | null>(null)
 
   useEffect(() => {
     void recallFolder().then(setRememberedFolder)
@@ -70,19 +84,72 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [expanded])
 
-  function startSession(handle: FileSystemDirectoryHandle, { keepTerminal = false } = {}) {
+  // ---- Workshop progress ----
+
+  // Latest progress for async code (a folder may finish loading after the participant moved on).
+  const progressRef = useRef(progress)
+
+  function updateProgress(next: Progress, dir = project?.dir) {
+    progressRef.current = next
+    setProgress(next)
+    saveLocalProgress(next)
+    if (dir) void writeProgress(dir, next).catch(() => {})
+  }
+
+  /** A project's saved position wins; a project without one gets the current position. */
+  async function syncProgressWith(dir: FileSystemDirectoryHandle) {
+    const saved = validProgress(await readProgress(dir).catch(() => null))
+    if (saved) {
+      progressRef.current = saved
+      setProgress(saved)
+      saveLocalProgress(saved)
+    } else {
+      void writeProgress(dir, progressRef.current).catch(() => {})
+    }
+  }
+
+  function selectStep(workshop: string, step: string) {
+    updateProgress({ ...progress, workshop, step })
+  }
+
+  function finishStep() {
+    const workshop = findWorkshop(progress.workshop)
+    if (!workshop) return
+    const key = stepKey(workshop.id, progress.step)
+    const completed = progress.completed.includes(key) ? progress.completed : [...progress.completed, key]
+    const index = workshop.steps.findIndex((step) => step.id === progress.step)
+    const next = workshop.steps[index + 1]
+    updateProgress({ workshop: workshop.id, step: next?.id ?? progress.step, completed })
+  }
+
+  // ---- Running a project ----
+
+  function resetView() {
     sessionRef.current?.stop()
-    if (!keepTerminal) terminalRef.current?.clear()
     setPrompt(null)
     setNotice(null)
     setPreviewUrl(null)
     setLastSync(null)
-    setFolderName(handle.name)
+    setExpanded(false)
+  }
+
+  function startSession(dir: FileSystemDirectoryHandle, { keepTerminal = false } = {}) {
+    resetView()
+    if (!keepTerminal) terminalRef.current?.clear()
+    setCreatingIn(null)
+    setProject({ dir, mainFile: null })
+    void findMainFile(dir).then((mainFile) => setProject((p) => (p?.dir === dir ? { dir, mainFile } : p)))
+    void syncProgressWith(dir)
 
     const session = new DevSession(
-      handle,
+      dir,
       {
-        onPhase: (next) => setPhase(next),
+        onPhase: (next) => {
+          setPhase(next)
+          // Show the install log while the project is being set up; fold it away once it runs.
+          if (next === 'running') setTerminalOpen(false)
+          else if (next !== 'stopped') setTerminalOpen(true)
+        },
         onOutput: (chunk) => terminalRef.current?.write(chunk),
         onServerReady: (url) => setPreviewUrl(url),
         onSynced: (changed, removed) => setLastSync({ paths: [...changed, ...removed], at: Date.now() }),
@@ -100,39 +167,51 @@ function App() {
     }
     await rememberFolder(handle)
     setRememberedFolder(handle)
+    setConversion(null)
 
     if (await fileExists(handle, 'package.json')) {
       startSession(handle)
     } else if (await isFolderEmpty(handle)) {
-      setPrompt({ kind: 'empty-folder', handle })
+      showPrompt({ kind: 'empty-folder', handle })
     } else {
       const names: string[] = []
       for await (const [name, entry] of handle.entries()) if (entry.kind === 'file') names.push(name)
       const pages = findHtmlPages(names)
-      setPrompt(pages.length > 0 ? { kind: 'html-site', handle, pages } : { kind: 'not-a-project', handle })
+      showPrompt(pages.length > 0 ? { kind: 'html-site', handle, pages } : { kind: 'not-a-project', handle })
+    }
+  }
+
+  /** Shows a question in the main area (stopping any running project). */
+  function showPrompt(next: Prompt) {
+    resetView()
+    setProject(null)
+    setPhase(null)
+    setPrompt(next)
+  }
+
+  /** Opens a folder picker; returns null (after showing any error) if the user cancels. */
+  async function pickDirectory(options: DirectoryPickerOptions): Promise<FileSystemDirectoryHandle | null> {
+    try {
+      return await window.showDirectoryPicker!(options)
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) setNotice(errorMessage(error))
+      return null
     }
   }
 
   async function pickFolder() {
-    try {
-      const handle = await window.showDirectoryPicker!({ id: 'workshop-project', mode: 'readwrite' })
-      await openFolder(handle)
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return
-      setNotice(error instanceof Error ? error.message : String(error))
-    }
+    const handle = await pickDirectory({ id: 'workshop-project', mode: 'readwrite' })
+    if (handle) await openFolder(handle)
   }
 
   /** Switches to the session view right away and logs to the terminal while files are written. */
   function beginCreating(target: FileSystemDirectoryHandle, message: string) {
-    sessionRef.current?.stop()
+    resetView()
     terminalRef.current?.clear()
-    setPrompt(null)
-    setNotice(null)
-    setPreviewUrl(null)
-    setLastSync(null)
-    setFolderName(target.name)
+    setProject(null)
+    setCreatingIn(target.name)
     setPhase('creating')
+    setTerminalOpen(true)
     const log = (text: string) => terminalRef.current?.write(text.replaceAll('\n', '\r\n'))
     log(`\x1b[36m● ${message}\x1b[0m\n`)
     return log
@@ -148,21 +227,18 @@ function App() {
       })
     } catch (error) {
       log(`\x1b[31m✖ Could not create files: ${errorMessage(error)}\x1b[0m\n`)
-      setPhase('error')
+      failCreating()
       return
     }
     startSession(handle, { keepTerminal: true })
   }
 
-  /** Opens a folder picker; returns null (after showing any error) if the user cancels. */
-  async function pickDirectory(options: DirectoryPickerOptions): Promise<FileSystemDirectoryHandle | null> {
-    try {
-      return await window.showDirectoryPicker!(options)
-    } catch (error) {
-      if (!(error instanceof DOMException && error.name === 'AbortError')) setNotice(errorMessage(error))
-      return null
-    }
+  function failCreating() {
+    setPhase('error')
+    setTerminalOpen(true)
   }
+
+  // ---- Converting an HTML site ----
 
   /** The participant chooses (or creates) an empty folder for the React version. */
   async function convertIntoChosenFolder(source: FileSystemDirectoryHandle) {
@@ -204,13 +280,31 @@ function App() {
     await convertToReact(source, target)
   }
 
+  /** Saves the sample website into a folder the participant picks, then converts it next to it. */
+  async function saveSampleSite() {
+    const parent = await pickDirectory({ id: 'sample-parent', mode: 'readwrite', startIn: 'documents' })
+    if (!parent) return
+    let site: FileSystemDirectoryHandle
+    let target: FileSystemDirectoryHandle
+    try {
+      site = await createNewFolder(parent, SAMPLE_SITE_NAME)
+      await writeLocalFiles(site, await loadSampleSite())
+      target = await createNewFolder(parent, `${site.name} - React`)
+    } catch (error) {
+      setNotice(`Could not save the sample site in “${parent.name}”: ${errorMessage(error)}`)
+      return
+    }
+    await convertToReact(site, target)
+  }
+
   async function convertToReact(source: FileSystemDirectoryHandle, target: FileSystemDirectoryHandle) {
     const log = beginCreating(target, `Converting "${source.name}" to React in "${target.name}"…`)
+    let result: ConversionResult
     try {
       const snapshot = await scanFolder(source)
       const files = new Map<string, Uint8Array>()
       for (const [path, file] of snapshot) files.set(path, await readBytes(file))
-      const result = convertSite({ files, siteName: source.name })
+      result = convertSite({ files, siteName: source.name })
       await writeLocalFiles(target, result.files, { onWritten: (path) => log(`  + ${path}\n`) })
 
       const checks = result.notes.filter((note) => note.kind === 'check').length
@@ -222,16 +316,26 @@ function App() {
       if (checks > 0) log(`\x1b[33m! ${checks} thing(s) to check — see “Please check” in CONVERSION.md.\x1b[0m\n`)
     } catch (error) {
       log(`\x1b[31m✖ Conversion failed: ${errorMessage(error)}\x1b[0m\n`)
-      setPhase('error')
+      failCreating()
       return
     }
     await rememberFolder(target)
     setRememberedFolder(target)
+    setConversion(summarize(result))
+    // A fresh conversion is Step 1, whatever the folder's progress file would say (it has none yet).
+    updateProgress({ ...progress, workshop: 'w4', step: 'jsx' }, target)
     startSession(target, { keepTerminal: true })
   }
 
+  // ---- Layout ----
+
   const showWelcome = phase === null || phase === 'stopped'
   const isExpanded = expanded && previewUrl !== null && !showWelcome
+  const folderName = project?.dir.name ?? creatingIn
+  const stepContext: StepContext = {
+    project: project && !showWelcome ? { name: project.dir.name, mainFile: project.mainFile } : null,
+    conversion,
+  }
 
   return (
     <div className={isExpanded ? 'app expanded' : 'app'}>
@@ -248,233 +352,80 @@ function App() {
       </header>
 
       <main className="workspace">
-        <section className="preview-pane">
+        <div className="main-column">
           {showWelcome ? (
-            <Welcome
-              prompt={prompt}
-              notice={notice}
-              rememberedFolder={rememberedFolder}
-              onPick={pickFolder}
-              onReopen={(handle) => void openFolder(handle)}
-              onCreateStarter={(handle) => void createStarter(handle)}
-              onConvert={(handle, where) =>
-                void (where === 'new-folder' ? convertIntoNewFolder(handle) : convertIntoChosenFolder(handle))
-              }
-              onDismissPrompt={() => setPrompt(null)}
-            />
+            <section className="preview-pane">
+              <Welcome
+                prompt={prompt}
+                notice={notice}
+                rememberedFolder={rememberedFolder}
+                onPick={pickFolder}
+                onReopen={(handle) => void openFolder(handle)}
+                onUseSample={() => showPrompt({ kind: 'sample', siteName: SAMPLE_SITE_NAME })}
+                onSaveSample={() => void saveSampleSite()}
+                onCreateStarter={(handle) => void createStarter(handle)}
+                onConvert={(handle, where: ConvertTarget) =>
+                  void (where === 'new-folder' ? convertIntoNewFolder(handle) : convertIntoChosenFolder(handle))
+                }
+                onDismissPrompt={() => setPrompt(null)}
+              />
+            </section>
           ) : (
-            <>
-              <div className="preview-toolbar">
-                <button
-                  type="button"
-                  className="icon-button"
-                  title="Reload preview"
-                  disabled={!previewUrl}
-                  onClick={() => setPreviewKey((key) => key + 1)}
-                >
-                  ↻
-                </button>
-                <span className="preview-url">{previewUrl ?? PHASE_LABELS[phase]}</span>
-                {previewUrl && (
-                  <>
-                    <button type="button" className="button" onClick={() => setExpanded(true)}>
-                      Full view ⤢
-                    </button>
-                    <a
-                      className="button"
-                      href={previewTabUrl(previewUrl)}
-                      target="_blank"
-                      rel="noreferrer"
-                      title="Keep this tab open: your project runs here."
-                    >
-                      Open in new tab ↗
-                    </a>
-                  </>
-                )}
-              </div>
-              {isExpanded && (
-                <button type="button" className="button exit-full-view" onClick={() => setExpanded(false)}>
-                  Exit full view (Esc)
-                </button>
-              )}
-              {previewUrl ? (
-                <iframe key={previewKey} className="preview-frame" src={previewUrl} title="Preview" />
-              ) : (
-                <div className="preview-placeholder">
-                  {phase === 'error' ? (
-                    <p>Something went wrong — see the terminal below.</p>
-                  ) : (
-                    <>
-                      <div className="spinner" aria-hidden="true" />
-                      <p>{PHASE_LABELS[phase]}</p>
-                      {phase === 'installing' && <p className="hint">The first install takes about 10–30 seconds.</p>}
-                    </>
-                  )}
-                </div>
-              )}
-            </>
+            <PreviewPane
+              key={previewUrl ?? 'starting'}
+              previewUrl={previewUrl}
+              folderName={folderName}
+              statusLabel={PHASE_LABELS[phase ?? 'booting']}
+              status={phase === 'error' ? 'error' : 'loading'}
+              hint={phase === 'installing' ? 'The first install takes about 10–30 seconds.' : null}
+              onFullView={() => setExpanded(true)}
+              onEscape={() => setExpanded(false)}
+            />
           )}
-        </section>
+          {isExpanded && (
+            <button type="button" className="button exit-full-view" onClick={() => setExpanded(false)}>
+              Exit full view (Esc)
+            </button>
+          )}
+          <TerminalDrawer
+            terminalRef={terminalRef}
+            open={terminalOpen}
+            onToggle={() => setTerminalOpen((open) => !open)}
+            badge={lastSync && <SyncBadge sync={lastSync} />}
+          />
+        </div>
 
-        <section className="terminal-pane">
-          <div className="terminal-header">
-            <span>Terminal</span>
-            {lastSync && <SyncBadge sync={lastSync} />}
-          </div>
-          <TerminalPanel terminalRef={terminalRef} />
-        </section>
+        <GuidePanel
+          progress={progress}
+          ctx={stepContext}
+          hasProject={!showWelcome}
+          onSelect={selectStep}
+          onNext={finishStep}
+          onOpenFolder={() => void pickFolder()}
+          onUseSample={() => showPrompt({ kind: 'sample', siteName: SAMPLE_SITE_NAME })}
+        />
       </main>
     </div>
   )
 }
 
-interface WelcomeProps {
-  prompt: Prompt | null
-  notice: string | null
-  rememberedFolder: FileSystemDirectoryHandle | null
-  onPick: () => void
-  onReopen: (handle: FileSystemDirectoryHandle) => void
-  onCreateStarter: (handle: FileSystemDirectoryHandle) => void
-  onConvert: (handle: FileSystemDirectoryHandle, where: ConvertTarget) => void
-  onDismissPrompt: () => void
+/** The file with the main page's JSX, for the step instructions. */
+async function findMainFile(dir: FileSystemDirectoryHandle): Promise<string | null> {
+  for (const path of ['src/pages/HomePage.jsx', 'src/App.jsx', 'src/App.tsx']) {
+    if (await fileExists(dir, path)) return path
+  }
+  return null
 }
 
-function Welcome(props: WelcomeProps) {
-  const { prompt, notice, rememberedFolder, onPick, onReopen, onCreateStarter, onConvert, onDismissPrompt } = props
-  if (!browserSupported) {
-    return (
-      <div className="welcome">
-        <h1>Please open this page in Chrome or Edge</h1>
-        <p>This app needs access to a folder on your computer, which only Chrome and Edge support right now.</p>
-      </div>
-    )
+function summarize(result: ConversionResult): ConversionSummary {
+  const count = (title: string) => result.notes.find((note) => note.title.startsWith(title))?.count ?? 0
+  return {
+    pages: result.pages.length,
+    classNames: count('`class` became `className`'),
+    handlers: count('Inline event handlers became functions'),
+    links: count('Links between your pages'),
+    checks: result.notes.filter((note) => note.kind === 'check').length,
   }
-
-  if (!window.crossOriginIsolated) {
-    return (
-      <div className="welcome">
-        <h1>This page can’t run Node.js</h1>
-        <p>
-          The server must send <code>Cross-Origin-Opener-Policy</code> and <code>Cross-Origin-Embedder-Policy</code>{' '}
-          headers. Please tell the workshop organizers.
-        </p>
-      </div>
-    )
-  }
-
-  if (prompt?.kind === 'empty-folder') {
-    return (
-      <div className="welcome">
-        <h1>“{prompt.handle.name}” is empty</h1>
-        <p>Create a starter React project in this folder? You’ll be able to edit every file in VS Code.</p>
-        <div className="actions">
-          <button type="button" className="button primary" onClick={() => onCreateStarter(prompt.handle)}>
-            Create React project
-          </button>
-          <button type="button" className="button" onClick={onDismissPrompt}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  if (prompt?.kind === 'html-site') {
-    return <ConvertPrompt prompt={prompt} notice={notice} onConvert={onConvert} onCancel={onDismissPrompt} />
-  }
-
-  if (prompt?.kind === 'not-a-project') {
-    return (
-      <div className="welcome">
-        <h1>Nothing to run in “{prompt.handle.name}”</h1>
-        <p>
-          This folder has no <code>package.json</code> (React project) and no <code>.html</code> page at its top level.
-          Choose an empty folder, an existing React project, or the folder that contains your site’s{' '}
-          <code>index.html</code>.
-        </p>
-        <div className="actions">
-          <button type="button" className="button primary" onClick={onPick}>
-            Choose another folder
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="welcome">
-      <h1>Run React right in your browser</h1>
-      <p>No installs needed. Your files stay on your computer.</p>
-      <ol className="steps">
-        <li>
-          Choose a folder: your <strong>HTML website</strong> to convert it, an <strong>empty folder</strong> to start
-          a new project, or an existing React project.
-        </li>
-        <li>
-          Edit the files in <strong>VS Code</strong> and save.
-        </li>
-        <li>Your site updates here automatically.</li>
-      </ol>
-      {notice && <p className="notice">{notice}</p>}
-      <div className="actions">
-        <button type="button" className="button primary" onClick={onPick}>
-          Open folder
-        </button>
-        {rememberedFolder && (
-          <button type="button" className="button" onClick={() => onReopen(rememberedFolder)}>
-            Reopen “{rememberedFolder.name}”
-          </button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-interface ConvertPromptProps {
-  prompt: Extract<Prompt, { kind: 'html-site' }>
-  notice: string | null
-  onConvert: (handle: FileSystemDirectoryHandle, where: ConvertTarget) => void
-  onCancel: () => void
-}
-
-function ConvertPrompt({ prompt, notice, onConvert, onCancel }: ConvertPromptProps) {
-  const name = prompt.handle.name
-  return (
-    <div className="welcome">
-      <h1>“{name}” is an HTML website</h1>
-      <p>
-        Convert it to a React project? Your original files stay exactly as they are. The React version goes into a new
-        folder.
-      </p>
-      {prompt.pages.length > 1 && (
-        <p className="hint">
-          Found {prompt.pages.length} pages ({prompt.pages.join(', ')}). Each one becomes a component, and React Router
-          switches between them.
-        </p>
-      )}
-      <ol className="steps">
-        <li>
-          Click <strong>Create “{name} - React”</strong>.
-        </li>
-        <li>
-          The dialog opens inside “{name}”. Go <strong>up one folder</strong> and click <strong>Open</strong> (or{' '}
-          <strong>Select</strong>). The new folder is created next to “{name}”.
-        </li>
-      </ol>
-      {notice && <p className="notice">{notice}</p>}
-      <div className="actions">
-        <button type="button" className="button primary" onClick={() => onConvert(prompt.handle, 'new-folder')}>
-          Create “{name} - React”
-        </button>
-        <button type="button" className="button" onClick={() => onConvert(prompt.handle, 'choose-folder')}>
-          Choose another empty folder
-        </button>
-        <button type="button" className="button" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  )
 }
 
 function errorMessage(error: unknown): string {

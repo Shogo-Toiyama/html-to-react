@@ -1,7 +1,10 @@
 import type { DirectoryNode, FileSystemTree } from '@webcontainer/api'
 
-/** Names we never read from (or sync out of) the participant's folder. */
-const IGNORED_NAMES = new Set(['node_modules', '.git', 'dist', '.DS_Store', 'Thumbs.db'])
+/**
+ * Names we never read from (or sync out of) the participant's folder.
+ * `.launchpad` holds workshop progress; `.launchpad-runtime` exists only in the container.
+ */
+const IGNORED_NAMES = new Set(['node_modules', '.git', 'dist', '.DS_Store', 'Thumbs.db', '.launchpad', '.launchpad-runtime'])
 
 export interface LocalFileEntry {
   handle: FileSystemFileHandle
