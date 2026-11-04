@@ -8,9 +8,11 @@ A browser app that runs a workshop participant's local React project without ins
 - An empty folder can be turned into a starter Vite + React (JavaScript) project.
 - A plain HTML/CSS/JS site can be converted into a React project in a new folder (the original is never changed).
 
-## HTML → React converter (v1)
+## HTML → React converter
 
-`src/converter/` turns one HTML page into a Vite + React project with as few changes as possible. Everything is deterministic (no LLM yet).
+`src/converter/` turns a plain HTML/CSS/JS site into a Vite + React project that looks and works the same. Everything is deterministic (no LLM yet). Every HTML page in the folder (including subfolders) is converted.
+
+### One page
 
 | Original | React project |
 |---|---|
@@ -20,9 +22,22 @@ A browser app that runs a workshop participant's local React project without ins
 | Classic `<script>` code | `src/legacy-script.js`, run once from `useEffect`. Only what breaks is changed: `DOMContentLoaded`/`window.onload` wrappers run immediately, implicit globals get `let`, functions used by inline handlers are put on `window`. JS edits trigger a full page reload so the code never runs twice. `StrictMode` is left out while this file exists. |
 | Images, fonts, other files | `public/` (same layout) |
 
+### Several pages (React Router)
+
+Each page becomes a component, and `src/App.jsx` maps URLs to them with React Router (`react-router` is added to `package.json`).
+
+| Original | React project |
+|---|---|
+| `index.html`, `about.html`, `blog/post.html` | `src/pages/HomePage.jsx` at `/`, `AboutPage.jsx` at `/about`, `BlogPostPage.jsx` at `/blog/post` |
+| `<a href="about.html#team">` | `<Link to="/about#team">`. `src/ScrollToTop.jsx` scrolls to the top (or the `#id`) on each navigation. Old `*.html` URLs are redirected in `src/main.jsx`. |
+| `<head>` of every page | One `index.html`. Tags that differ: `<title>` and page-describing `<meta>` go into the page's JSX (React 19 hoists them); anything else is added to `index.html` with a "Please check" note. |
+| `<body>` attributes | Shared ones stay on `<body>`; page-only ones are set and removed by the page component in `useEffect`. |
+| CSS | Files linked by every page are imported in `src/main.jsx`; the rest (and inline `<style>`) in the page component. All CSS is global in a single-page app, so page-only CSS gets a "Please check" note. |
+| Scripts | Per page: `src/pages/<Page>.legacy-script.js`, run when the page mounts. `src/legacy-page.js` tracks `window`/`document` listeners and timers so they stop when the page unmounts. |
+
 Every change is explained for participants in the generated `CONVERSION.md`.
 
-Not supported yet: multiple pages (links to other `.html` files), `<script type="module">`.
+Not supported yet: `<script type="module">`.
 
 ## Tests
 
@@ -30,7 +45,7 @@ Not supported yet: multiple pages (links to other `.html` files), `<script type=
 npm test
 ```
 
-Fixtures live in `src/converter/__fixtures__/` (`jigsaw` is a real workshop-style site, `portfolio` exercises common patterns). The converted output is stored as file snapshots in `src/converter/__snapshots__/` — read them to see exactly what the converter produces, and run `npx vitest run -u` after an intended change.
+Fixtures live in `src/converter/__fixtures__/` (`acm-design` and `jigsaw` are real workshop-style sites, `portfolio` exercises common patterns and is also converted without `about.html` to cover single-page sites). The converted output is stored as file snapshots in `src/converter/__snapshots__/` — read them to see exactly what the converter produces, and run `npx vitest run -u` after an intended change.
 
 ## Editor support without Node
 
@@ -67,8 +82,11 @@ WebContainer API is free for open-source, personal and non-commercial use. Comme
 | `src/lib/editorSupport.ts` | VS Code config and type definitions written to the local folder |
 | `src/lib/starterProject.ts` | Files for a new starter project |
 | `src/lib/webcontainer.ts` | Single WebContainer instance |
-| `src/converter/index.ts` | `convertSite()`: splits the page into head/body/CSS/scripts/assets and builds the project |
-| `src/converter/jsx.ts` | HTML elements → JSX text |
+| `src/converter/index.ts` | `convertSite()`: converts every page and builds the project (single page or React Router) |
+| `src/converter/page.ts` | `convertPage()`: splits one page into head/body/CSS/scripts and rewrites its URLs |
+| `src/converter/pages.ts` | Finds the site's pages and names their routes and components |
+| `src/converter/templates.ts` | Text of generated files (`App.jsx`, page components, `main.jsx`, `index.html`, helpers) |
+| `src/converter/jsx.ts` | HTML elements → JSX text (links between pages → `<Link>`) |
 | `src/converter/handlers.ts` | Inline `onclick="..."` code → arrow functions |
-| `src/converter/legacyScript.ts` | Builds `legacy-script.js` from the page's scripts |
+| `src/converter/legacyScript.ts` | Builds a page's legacy script from its `<script>` code |
 | `src/converter/report.ts` | Builds `CONVERSION.md` |

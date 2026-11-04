@@ -272,11 +272,24 @@ export interface LegacyScriptOptions {
   exposedVariables: string[]
   /** Code from `<body onload="...">`, already converted. */
   bodyOnload: string | null
+  /** The component file that imports this script, for the comment at the top. */
+  component?: string
+  /**
+   * Multi-page sites: the page component unmounts when another page opens,
+   * so window/document listeners and timers are tracked and stopped then.
+   * The value is the import path of the helper (`../legacy-page.js`).
+   */
+  pageTrackerImport?: string
   notes: NoteCollector
 }
 
+/** Variable holding the tracker inside `runLegacyScript()`; unlikely to clash with site code. */
+const TRACKER = 'legacyPage'
+
 export function buildLegacyScript(options: LegacyScriptOptions): string {
   const { sources, exposedFunctions, exposedVariables, bodyOnload, notes } = options
+  const component = options.component ?? 'App.jsx'
+  const tracker = options.pageTrackerImport
   const transformed = sources.map((source) => ({ source, ...transformSource(source, notes) }))
 
   const declared = new Set<string>()
@@ -285,6 +298,16 @@ export function buildLegacyScript(options: LegacyScriptOptions): string {
   for (const { ast } of transformed) if (ast) findImplicitGlobals(ast, declared, implicit)
 
   const body: string[] = []
+  if (tracker) {
+    body.push(
+      '  // Converter: when you open another page, React removes this one, but',
+      '  // listeners on window/document and timers would keep running. These',
+      '  // versions remember them so they stop when you leave the page.',
+      `  const ${TRACKER} = trackPage()`,
+      `  const { setTimeout, setInterval, requestAnimationFrame } = ${TRACKER}`,
+      '',
+    )
+  }
   if (implicit.size > 0) {
     body.push(
       '  // Converter: these variables were used without `let`. That works in a plain',
@@ -295,14 +318,14 @@ export function buildLegacyScript(options: LegacyScriptOptions): string {
     notes.change(
       'Added `let` for variables that were never declared',
       'Plain `<script>` code allows `x = 5` without declaring `x` first. React code runs in strict mode, ' +
-        'where that is an error. The converter added a `let` line at the top of `legacy-script.js`.',
+        'where that is an error. The converter added a `let` line at the top of `runLegacyScript()`.',
       [...implicit].join(', '),
     )
   }
 
   if (exposedFunctions.length > 0) {
     body.push(
-      '  // Converter: onclick="..." attributes in App.jsx call these through `window`.',
+      `  // Converter: onclick="..." attributes in ${component} call these through \`window\`.`,
       `  Object.assign(window, { ${exposedFunctions.join(', ')} })`,
       '',
     )
@@ -320,15 +343,16 @@ export function buildLegacyScript(options: LegacyScriptOptions): string {
   if (bodyOnload) {
     body.push('', '  // Converter: from <body onload="...">', `  ${bodyOnload}`)
   }
+  if (tracker) body.push('', `  return ${TRACKER}.stop`)
 
-  const labels = sources.map((source) => source.label).join(', ')
+  const labels = sources.map((source) => source.label).join(', ') || '<body onload>'
   return `// Your original JavaScript, moved here from: ${labels}
 //
 // It still changes the page directly (document.querySelector, classList,
 // innerHTML, ...). That works, but React doesn't know about those changes.
 // As you learn React, move this code into your components piece by piece.
-// When this file is empty, delete it along with its import in App.jsx.
-
+// When this file is empty, delete it along with its import in ${component}.
+${tracker ? `\nimport { trackPage } from '${tracker}'\n` : ''}
 export function runLegacyScript() {
 ${body.join('\n')}
 }

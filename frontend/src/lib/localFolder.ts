@@ -80,6 +80,27 @@ export async function isFolderEmpty(dir: FileSystemDirectoryHandle): Promise<boo
   return true
 }
 
+/** True if `child` is a folder directly inside `parent`. */
+export async function containsFolder(parent: FileSystemDirectoryHandle, child: FileSystemDirectoryHandle): Promise<boolean> {
+  for await (const entry of parent.values()) {
+    if (entry.kind === 'directory' && (await entry.isSameEntry(child))) return true
+  }
+  return false
+}
+
+/** Creates `name` inside `parent`, or `name 2`, `name 3`, ... if that name is taken. */
+export async function createNewFolder(parent: FileSystemDirectoryHandle, name: string): Promise<FileSystemDirectoryHandle> {
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? name : `${name} ${n}`
+    if (!(await entryExists(parent, candidate))) return parent.getDirectoryHandle(candidate, { create: true })
+  }
+}
+
+async function entryExists(dir: FileSystemDirectoryHandle, name: string): Promise<boolean> {
+  for await (const existing of dir.keys()) if (existing === name) return true
+  return false
+}
+
 export async function fileExists(dir: FileSystemDirectoryHandle, path: string): Promise<boolean> {
   try {
     await getFileHandle(dir, path, false)

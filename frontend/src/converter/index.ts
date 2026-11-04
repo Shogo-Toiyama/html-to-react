@@ -1,361 +1,434 @@
-import { parse, serializeOuter, type DefaultTreeAdapterTypes } from 'parse5'
 import { createPackageJson, GITIGNORE, VITE_CONFIG } from '../lib/starterProject'
 import { rewriteCssUrls } from './css'
-import { printChildren, type JsxContext } from './jsx'
-import { buildLegacyScript, collectTopLevelNames, type ScriptSource } from './legacyScript'
+import { buildLegacyScript } from './legacyScript'
 import { NoteCollector, type Note } from './notes'
-import { basename, extname, publicUrl, resolveUrl } from './paths'
+import { convertPage, serialize, type Attribute, type CssEntry, type Element, type PageResult, type SiteContext } from './page'
+import { describePages, findSitePages, HTML_EXTENSIONS, isRootIndex, type SitePage } from './pages'
+import { basename, extname, resolveUrl } from './paths'
 import { buildReport, type FileMove } from './report'
-
-type Element = DefaultTreeAdapterTypes.Element
-type ParentNode = DefaultTreeAdapterTypes.ParentNode
-type ChildNode = DefaultTreeAdapterTypes.ChildNode
+import {
+  buildIndexHtml,
+  buildMain,
+  buildPageComponent,
+  buildRouterApp,
+  buildSingleApp,
+  LEGACY_PAGE_HELPER,
+  SCROLL_TO_TOP,
+} from './templates'
 
 /** Files that belong to the old site's tooling, not the site itself. Not copied. */
 const SKIPPED_EXTENSIONS = new Set(['.md', '.yml', '.yaml', '.toml', '.lock', '.sh', '.py', '.bat', '.ps1'])
-const HTML_EXTENSIONS = new Set(['.html', '.htm'])
-const JS_TYPES = new Set(['', 'text/javascript', 'application/javascript', 'text/ecmascript', 'application/ecmascript'])
+
+/** Added to package.json for sites with several pages. */
+const ROUTER_DEPENDENCY = { 'react-router': '^8.5.1' }
 
 export interface ConvertInput {
   /** Every file of the site, keyed by root-relative path (`img/a.png`). */
   files: Map<string, Uint8Array>
   /** Used for the package name, e.g. the folder name. */
   siteName: string
-  /** The HTML page to convert. Defaults to `index.html` (see `findHtmlPages`). */
-  entry?: string
 }
 
 export interface ConversionResult {
-  entry: string
+  /** The converted HTML pages, `index.html` first. */
+  pages: SitePage[]
   /** The React project's files, keyed by path. */
   files: Map<string, string | Uint8Array>
   notes: Note[]
 }
 
-/** Root-level HTML pages, with `index.html` first. */
+/** Root-level HTML pages, with `index.html` first (used to recognize a site folder). */
 export function findHtmlPages(paths: Iterable<string>): string[] {
   const pages = [...paths].filter((path) => !path.includes('/') && HTML_EXTENSIONS.has(extname(path)))
-  return pages.sort((a, b) => Number(isIndex(b)) - Number(isIndex(a)) || a.localeCompare(b))
+  return pages.sort((a, b) => Number(isRootIndex(b)) - Number(isRootIndex(a)) || a.localeCompare(b))
 }
 
-function isIndex(path: string): boolean {
-  return /^index\.html?$/i.test(path)
-}
-
+/**
+ * Converts a plain HTML/CSS/JS site into a Vite + React project. A site with
+ * one page becomes `src/App.jsx`. A site with several pages becomes one
+ * component per page in `src/pages/`, shown by React Router in `src/App.jsx`.
+ */
 export function convertSite(input: ConvertInput): ConversionResult {
   const { files, siteName } = input
-  const entry = input.entry ?? findHtmlPages(files.keys())[0]
-  if (!entry) throw new Error('No HTML page found in the top level of this folder.')
+  const pages = describePages(findSitePages(files.keys()))
+  if (pages.length === 0) throw new Error('No HTML page found in this folder.')
 
   const decoder = new TextDecoder()
-  const readText = (path: string) => decoder.decode(files.get(path))
-  const notes = new NoteCollector()
-  const output = new Map<string, string | Uint8Array>()
-  const moves: FileMove[] = []
-
-  const document = parse(readText(entry))
-  const htmlElement = findChild(document, 'html')!
-  const head = findChild(htmlElement, 'head')!
-  const body = findChild(htmlElement, 'body')!
-
-  // ---- Pull <style>, <link rel=stylesheet> and <script> out of the page ----
-
-  type CssEntry = { kind: 'file'; path: string } | { kind: 'inline'; css: string }
-  const cssEntries: CssEntry[] = []
-  const scripts: ScriptSource[] = []
-  const headScripts: Element[] = []
-  const bodyScripts: Element[] = []
-  const consumedScripts = new Set<string>()
-  let inlineScriptCount = 0
-
-  const extract = (element: Element, inHead: boolean): boolean => {
-    const attr = (name: string) => element.attrs.find((a) => a.name === name)?.value
-    switch (element.tagName) {
-      case 'style':
-        cssEntries.push({ kind: 'inline', css: textContent(element) })
-        return true
-      case 'link': {
-        const rel = (attr('rel') ?? '').toLowerCase().split(/\s+/)
-        const href = attr('href')
-        if (!rel.includes('stylesheet') || !href) return false
-        const resolved = resolveUrl(entry, href)
-        if (!resolved) {
-          if (!inHead) headScripts.push(element)
-          return !inHead
-        }
-        if (files.has(resolved.path)) cssEntries.push({ kind: 'file', path: resolved.path })
-        else notes.check('A linked CSS file was not found', 'This `<link>` points at a file that is not in your folder.', href)
-        return true
-      }
-      case 'script': {
-        const type = (attr('type') ?? '').toLowerCase().trim()
-        const src = attr('src')
-        if (type === 'module') {
-          notes.check(
-            '`<script type="module">` is not converted yet',
-            'This version only converts classic scripts. The module script was left out; ' +
-              'its code needs to be moved into the React project by hand.',
-            src ?? `${entry} (inline)`,
-          )
-          return true
-        }
-        if (!JS_TYPES.has(type)) {
-          headScripts.push(element) // JSON-LD, templates, etc.
-          return true
-        }
-        if (src) {
-          const resolved = resolveUrl(entry, src)
-          if (!resolved) {
-            ;(inHead ? headScripts : bodyScripts).push(element)
-          } else if (files.has(resolved.path)) {
-            scripts.push({ label: resolved.path, code: readText(resolved.path) })
-            consumedScripts.add(resolved.path)
-          } else {
-            notes.check('A script file was not found', 'This `<script src>` points at a file that is not in your folder.', src)
-          }
-          return true
-        }
-        inlineScriptCount += 1
-        scripts.push({ label: `${entry} (inline <script>)`, code: textContent(element) })
-        return true
-      }
-    }
-    return false
+  const site: SiteContext = {
+    files,
+    readText: (path) => decoder.decode(files.get(path)),
+    notes: new NoteCollector(),
+    routes: pages.length > 1 ? new Map(pages.map((page) => [page.file, page.route])) : null,
   }
+  const build = new ProjectBuilder(site)
+  const converted = pages.map((page) => convertPage(page.file, site))
+  if (pages.length === 1) buildSinglePage(build, pages[0], converted[0])
+  else buildMultiPage(build, pages, converted)
+  build.finish(siteName, pages)
+  return { pages, files: build.output, notes: site.notes.list() }
+}
 
-  const extractAll = (parent: ParentNode, inHead: boolean) => {
-    parent.childNodes = parent.childNodes.filter((node) => {
-      if (!isElement(node)) return true
-      if (extract(node, inHead)) return false
-      extractAll(node, inHead)
-      return true
-    })
+function buildSinglePage(build: ProjectBuilder, page: SitePage, result: PageResult) {
+  const { output, moves } = build
+  const entry = page.file
+  const jsxLines = result.printBody(3)
+  const hasScripts = build.writeLegacyScript(result, 'src/legacy-script.js', null)
+  output.set('src/App.jsx', buildSingleApp(entry, jsxLines, hasScripts))
+  moves.push({ from: `\`${entry}\` → \`<body>\``, to: '`src/App.jsx` (as JSX)' })
+  moves.push({ from: `\`${entry}\` → \`<head>\``, to: '`index.html`' })
+  if (hasScripts) moves.push({ from: scriptLabels(result), to: '`src/legacy-script.js`' })
+
+  const entryBase = basename(entry).replace(/\.html?$/i, '')
+  const cssImports = result.css.map((css) => build.cssImport(css, entry, 'src', entryBase, './'))
+  build.writeAssets()
+
+  result.rewriteHeadUrls()
+  output.set('src/main.jsx', buildMain({ cssImports, strictMode: !hasScripts, router: false }))
+  output.set(
+    'index.html',
+    buildIndexHtml({
+      htmlAttrs: result.htmlAttrs,
+      head: [...result.head, ...result.headScripts].map(serialize),
+      bodyAttrs: result.bodyAttrs,
+      bodyScripts: result.bodyScripts.map(serialize),
+    }),
+  )
+  build.hasScripts = hasScripts
+}
+
+function buildMultiPage(build: ProjectBuilder, pages: SitePage[], results: PageResult[]) {
+  const { output, moves, notes } = build
+  const bodies = results.map((result) => result.printBody(3))
+  results.forEach((result) => result.rewriteHeadUrls())
+
+  // ---- <head>: what every page has goes into index.html ----
+
+  const everyPage = <T,>(lists: T[][], key: (item: T) => string) => {
+    const sets = lists.map((list) => new Set(list.map(key)))
+    return (item: T) => sets.every((set) => set.has(key(item)))
   }
-  extractAll(head, true)
-  extractAll(body, false)
-  if (inlineScriptCount > 1) {
-    let n = 0
-    for (const script of scripts) {
-      if (script.label.endsWith('(inline <script>)')) script.label = script.label.replace('<script>', `<script> #${++n}`)
+  const inAllHeads = everyPage(results.map((r) => r.head), serialize)
+  const htmlHead = new OrderedSet()
+  const someHeads: string[] = []
+  const pageHeads: Element[][] = results.map((result) =>
+    result.head.filter((element) => {
+      if (inAllHeads(element)) {
+        htmlHead.add(serialize(element))
+        return false
+      }
+      if (isPerPageHeadTag(element)) return true
+      if (htmlHead.add(serialize(element))) someHeads.push(`${result.file}: ${shortTag(element)}`)
+      return false
+    }),
+  )
+  const inAllScripts = everyPage(results.map((r) => [...r.headScripts, ...r.bodyScripts]), serialize)
+  const htmlBodyScripts = new OrderedSet()
+  for (const result of results) {
+    for (const element of [...result.headScripts, ...result.bodyScripts]) {
+      const added = (result.headScripts.includes(element) ? htmlHead : htmlBodyScripts).add(serialize(element))
+      if (added && !inAllScripts(element)) someHeads.push(`${result.file}: ${shortTag(element)}`)
     }
   }
-
-  // ---- Assets: everything else goes to public/ ----
-
-  const rewriteUrl = (url: string): string => {
-    const resolved = resolveUrl(entry, url)
-    if (!resolved || resolved.path === '') return url
-    if (HTML_EXTENSIONS.has(extname(resolved.path))) {
-      if (resolved.path !== entry) {
-        notes.check(
-          'Links to other pages won’t work yet',
-          `This version converts one page (${entry}). Links to other HTML pages will show the converted page ` +
-            'instead. Support for multiple pages is coming.',
-          url,
-        )
-      }
-      return url
-    }
-    if (!files.has(resolved.path)) {
-      notes.check('A file used in your HTML was not found', 'These paths were left unchanged.', url)
-      return url
-    }
+  if (pageHeads.some((list) => list.length > 0)) {
     notes.change(
-      'Image and file paths now start with `/`',
-      'Images and other files moved to the `public/` folder, which Vite serves from the root of the site. ' +
-        'So `./img/me.png` became `/img/me.png` (the file is at `public/img/me.png`).',
-      url,
+      'Each page\'s `<title>` moved into its component',
+      'All pages now share one `index.html`. A `<title>` (or `<meta>`) written in a component\'s JSX is moved ' +
+        'into `<head>` by React while that page is on screen, so each page keeps its own title.',
     )
-    return publicUrl(resolved.path, resolved.suffix)
+  }
+  if (someHeads.length > 0) {
+    notes.check(
+      'Some `<head>` tags now load on every page',
+      'All pages now share one `index.html`. These tags were only on some of your pages, so check that they ' +
+        'don\'t change how the other pages look or work.',
+      someHeads.join(', '),
+    )
   }
 
-  // ---- Body → App.jsx ----
+  // ---- <body> attributes: shared ones stay on <body>, the rest move into the page ----
 
-  const { functions, variables } = collectTopLevelNames(scripts)
-  const ctx: JsxContext = {
-    file: entry,
-    globals: new Set([...functions, ...variables]),
-    usedGlobals: new Set(),
-    rewriteUrl,
-    notes,
-  }
-  const jsxLines = printChildren(body.childNodes, ctx, 3, 'body')
-
-  let bodyOnload: string | null = null
-  const bodyAttributes = body.attrs.filter((attr) => {
-    if (!attr.name.startsWith('on')) return true
-    if (attr.name === 'onload') {
-      bodyOnload = attr.value.trim()
-      notes.change(
-        '`<body onload>` moved into legacy-script.js',
-        'The code from `<body onload="...">` now runs at the end of `runLegacyScript()`, after the page is on screen.',
-      )
-    } else {
-      notes.check('An event handler on `<body>` was removed', 'Move this code into legacy-script.js by hand.', attr.name)
-    }
-    return false
+  const attrKey = (attr: Attribute) => `${attr.name}=${attr.value}`
+  const inAllBodies = everyPage(results.map((r) => r.bodyAttrs), attrKey)
+  const sharedBodyAttrs = results[0].bodyAttrs.filter(inAllBodies)
+  const pageBodyAttrs = results.map((result) => result.bodyAttrs.filter((attr) => !inAllBodies(attr)))
+  pageBodyAttrs.forEach((attrs, i) => {
+    if (attrs.length === 0) return
+    notes.change(
+      '`<body>` attributes moved into the page component',
+      'All pages now share one `<body>`. Attributes that only some pages had (like `class="dark"`) are added ' +
+        'by that page\'s component when it opens and removed when you leave.',
+      `${results[i].file}: ${attrs.map((attr) => `${attr.name}="${attr.value}"`).join(' ')}`,
+    )
   })
 
-  const hasScripts = scripts.length > 0 || bodyOnload !== null
-  if (hasScripts) {
+  // ---- CSS: files every page links go in main.jsx, the rest in each page ----
+
+  const linkedBy = new Map<string, Set<string>>()
+  for (const result of results) {
+    for (const css of result.css) if (css.kind === 'file') getOrAdd(linkedBy, css.path, () => new Set()).add(result.file)
+  }
+  const shared = (path: string) => linkedBy.get(path)!.size === pages.length
+  const pageOnlyCss: string[] = []
+
+  // ---- Scripts and page components ----
+
+  let anyScripts = false
+  const scriptUse = new Map<string, number>()
+  results.forEach((result, i) => {
+    const page = pages[i]
+    const cssImports = result.css
+      .filter((css) => !(css.kind === 'file' && shared(css.path)))
+      .map((css) => {
+        pageOnlyCss.push(css.kind === 'file' ? `${css.path} (${result.file})` : `<style> in ${result.file}`)
+        return build.cssImport(css, result.file, 'src/pages', page.component, '../')
+      })
+
+    const scriptFile = `src/pages/${page.component}.legacy-script.js`
+    const hasScripts = build.writeLegacyScript(result, scriptFile, page.component)
+    for (const path of result.consumedScripts) scriptUse.set(path, (scriptUse.get(path) ?? 0) + 1)
+    anyScripts ||= hasScripts
+
+    const headLines = result.printHead(pageHeads[i], 3)
     output.set(
-      'src/legacy-script.js',
-      buildLegacyScript({
-        sources: scripts,
-        exposedFunctions: [...ctx.usedGlobals].filter((name) => functions.has(name)),
-        exposedVariables: [...ctx.usedGlobals].filter((name) => variables.has(name) && !functions.has(name)),
-        bodyOnload,
-        notes,
+      `src/pages/${page.component}.jsx`,
+      buildPageComponent({
+        page,
+        cssImports,
+        legacyScript: hasScripts ? `./${page.component}.legacy-script.js` : null,
+        usesLink: result.usesLink(),
+        bodyAttrs: pageBodyAttrs[i],
+        headLines,
+        bodyLines: bodies[i],
       }),
     )
-    moves.push({ from: scripts.map((s) => `\`${s.label}\``).join(', ') || '`<body onload>`', to: '`src/legacy-script.js`' })
-  }
-  output.set('src/App.jsx', buildApp(entry, jsxLines, hasScripts))
-  moves.unshift({ from: `\`${entry}\` → \`<body>\``, to: '`src/App.jsx` (as JSX)' })
+    moves.push({ from: `\`${page.file}\` → \`<body>\``, to: `\`src/pages/${page.component}.jsx\` (as JSX)` })
+    if (hasScripts) moves.push({ from: scriptLabels(result), to: `\`${scriptFile}\`` })
+  })
+  moves.push({ from: 'The `<head>` of every page', to: '`index.html` (one for the whole site)' })
+  const mainImports = results[0].css
+    .filter((css) => css.kind === 'file' && shared(css.path))
+    .map((css) => build.cssImport(css, results[0].file, 'src', '', './'))
 
-  // ---- CSS → src/ ----
-
-  const cssImports: string[] = []
-  for (const path of files.keys()) {
-    if (extname(path) !== '.css') continue
-    output.set(`src/${path}`, rewriteCssUrls(readText(path), path, (p) => files.has(p), notes))
+  if (pageOnlyCss.length > 0) {
+    notes.check(
+      'CSS from one page now also applies to the other pages',
+      'React shows all your pages inside one HTML document, and the CSS of every page is loaded at the start. ' +
+        'CSS that used to be on only some pages now affects all of them. If a page looks different than before, ' +
+        'make those selectors more specific (for example `.about-title` instead of `h1`). Moving your styles ' +
+        'into Tailwind classes later also fixes this.',
+      pageOnlyCss.join(', '),
+    )
   }
-  const entryBase = basename(entry).replace(/\.html?$/i, '')
-  let inlineIndex = 0
-  for (const css of cssEntries) {
+  const sharedScripts = [...scriptUse].filter(([, count]) => count > 1).map(([path]) => path)
+  if (sharedScripts.length > 0) {
+    notes.check(
+      'A script used by several pages was copied into each of them',
+      'Each page now has its own `*.legacy-script.js`, so a change to this code must be made in every copy. ' +
+        'As you move the code into components, you can share it between pages again.',
+      sharedScripts.join(', '),
+    )
+  }
+  if (anyScripts) output.set('src/legacy-page.js', LEGACY_PAGE_HELPER)
+
+  notes.change(
+    'Your pages became components, and React Router switches between them',
+    'Each HTML page is now a component in `src/pages/`. `src/App.jsx` lists which URL shows which component. ' +
+      'When you click a link, React swaps the component instead of loading a new HTML file, and the URL in the ' +
+      'address bar still changes.',
+  )
+
+  build.writeAssets()
+  output.set('src/App.jsx', buildRouterApp(pages))
+  output.set('src/ScrollToTop.jsx', SCROLL_TO_TOP)
+  output.set('src/main.jsx', buildMain({ cssImports: mainImports, strictMode: !anyScripts, router: true }))
+  output.set(
+    'index.html',
+    buildIndexHtml({
+      htmlAttrs: results[0].htmlAttrs,
+      head: htmlHead.values(),
+      bodyAttrs: sharedBodyAttrs,
+      bodyScripts: htmlBodyScripts.values(),
+    }),
+  )
+  build.hasScripts = anyScripts
+  build.dependencies = ROUTER_DEPENDENCY
+}
+
+/** Collects the output files shared by both kinds of site. */
+class ProjectBuilder {
+  readonly output = new Map<string, string | Uint8Array>()
+  readonly moves: FileMove[] = []
+  readonly notes: NoteCollector
+  hasScripts = false
+  dependencies: Record<string, string> = {}
+  private readonly site: SiteContext
+  private readonly consumedScripts = new Set<string>()
+  private readonly usedCss = new Set<string>()
+  private readonly movedCss = new Set<string>()
+
+  constructor(site: SiteContext) {
+    this.site = site
+    this.notes = site.notes
+    const { files, readText, notes } = site
+    // Every CSS file moves to src/ with the same layout, so @import between them keeps working.
+    for (const path of files.keys()) {
+      if (extname(path) !== '.css') continue
+      this.output.set(`src/${path}`, rewriteCssUrls(readText(path), path, (p) => files.has(p), notes))
+    }
+  }
+
+  /**
+   * Returns the import path for a page's CSS, from a file in `fromDir`.
+   * Inline <style> blocks are written to `<fromDir>/<baseName>.css`.
+   */
+  cssImport(css: CssEntry, page: string, fromDir: string, baseName: string, toSrc: string): string {
     if (css.kind === 'file') {
-      cssImports.push(`./${css.path}`)
-      moves.push({ from: `\`${css.path}\``, to: `\`src/${css.path}\`` })
-      continue
+      this.usedCss.add(css.path)
+      if (!this.movedCss.has(css.path)) {
+        this.movedCss.add(css.path)
+        this.moves.push({ from: `\`${css.path}\``, to: `\`src/${css.path}\`` })
+      }
+      return toSrc + css.path
     }
     let name: string
+    let n = 0
     do {
-      inlineIndex += 1
-      name = inlineIndex === 1 ? `${entryBase}.css` : `${entryBase}-${inlineIndex}.css`
-    } while (output.has(`src/${name}`))
-    output.set(`src/${name}`, rewriteCssUrls(css.css.replace(/^\n+/, ''), entry, (p) => files.has(p), notes))
-    cssImports.push(`./${name}`)
-    moves.push({ from: `\`<style>\` in \`${entry}\``, to: `\`src/${name}\`` })
+      n += 1
+      name = n === 1 ? `${baseName}.css` : `${baseName}-${n}.css`
+    } while (this.output.has(`${fromDir}/${name}`))
+    this.output.set(`${fromDir}/${name}`, rewriteCssUrls(css.css.replace(/^\n+/, ''), page, (p) => this.site.files.has(p), this.notes))
+    this.moves.push({ from: `\`<style>\` in \`${page}\``, to: `\`${fromDir}/${name}\`` })
+    return `./${name}`
   }
 
-  // ---- Everything else ----
+  /** Writes the page's legacy script if it has any JavaScript. Returns whether it did. */
+  writeLegacyScript(result: PageResult, path: string, component: string | null): boolean {
+    for (const script of result.consumedScripts) this.consumedScripts.add(script)
+    if (result.scripts.length === 0 && result.bodyOnload === null) return false
+    this.output.set(
+      path,
+      buildLegacyScript({
+        sources: result.scripts,
+        exposedFunctions: result.exposedFunctions(),
+        exposedVariables: result.exposedVariables(),
+        bodyOnload: result.bodyOnload,
+        component: component ? `${component}.jsx` : 'App.jsx',
+        pageTrackerImport: component ? '../legacy-page.js' : undefined,
+        notes: this.notes,
+      }),
+    )
+    return true
+  }
 
-  let assetCount = 0
-  const skipped: string[] = []
-  for (const [path, bytes] of files) {
-    const ext = extname(path)
-    if (path === entry || ext === '.css' || consumedScripts.has(path)) continue
-    if (HTML_EXTENSIONS.has(ext) || SKIPPED_EXTENSIONS.has(ext)) {
-      skipped.push(path)
-      continue
+  /** Copies images, fonts and other files to public/. */
+  writeAssets() {
+    let assetCount = 0
+    const skipped: string[] = []
+    for (const [path, bytes] of this.site.files) {
+      const ext = extname(path)
+      if (HTML_EXTENSIONS.has(ext) || ext === '.css' || this.consumedScripts.has(path)) continue
+      if (SKIPPED_EXTENSIONS.has(ext)) {
+        skipped.push(path)
+        continue
+      }
+      this.output.set(`public/${path}`, bytes)
+      assetCount += 1
     }
-    output.set(`public/${path}`, bytes)
-    assetCount += 1
+    if (assetCount > 0) this.moves.push({ from: `Images and other files (${assetCount})`, to: '`public/` (same folder layout)' })
+    if (skipped.length > 0) {
+      this.notes.check(
+        'Some files were not copied',
+        'Files that aren’t part of the website (like notes or config files) were left in your original folder.',
+        skipped.join(', '),
+      )
+    }
   }
-  if (assetCount > 0) moves.push({ from: `Images and other files (${assetCount})`, to: '`public/` (same folder layout)' })
-  if (skipped.length > 0) {
-    notes.check(
-      'Some files were not copied',
-      'Other HTML pages and files that aren’t part of the website (like notes or config files) were left in your ' +
-        'original folder.',
-      skipped.join(', '),
+
+  finish(siteName: string, pages: SitePage[]) {
+    this.noteUnusedCss(pages.length > 1)
+    this.output.set('package.json', createPackageJson(packageName(siteName), this.dependencies))
+    this.output.set('vite.config.js', VITE_CONFIG)
+    this.output.set('.gitignore', GITIGNORE)
+    this.output.set(
+      'CONVERSION.md',
+      buildReport({ pages: pages.length > 1 ? pages : null, entry: pages[0].file, moves: this.moves, notes: this.notes.list(), hasScripts: this.hasScripts }),
     )
   }
 
-  output.set('src/main.jsx', buildMain(cssImports, hasScripts))
-  output.set('index.html', buildIndexHtml(htmlElement, head, bodyAttributes, headScripts, bodyScripts, rewriteUrl))
-  moves.splice(1, 0, { from: `\`${entry}\` → \`<head>\``, to: '`index.html`' })
-  output.set('package.json', createPackageJson(packageName(siteName)))
-  output.set('vite.config.js', VITE_CONFIG)
-  output.set('.gitignore', GITIGNORE)
-  output.set('CONVERSION.md', buildReport({ entry, moves, notes: notes.list(), hasScripts }))
-
-  return { entry, files: output, notes: notes.list() }
-}
-
-function buildApp(entry: string, jsxLines: string[], hasScripts: boolean): string {
-  const imports = hasScripts ? `import { useEffect } from 'react'\nimport { runLegacyScript } from './legacy-script.js'\n\n` : ''
-  const effect = hasScripts
-    ? `  // Runs your original JavaScript once, after React has put the page on screen.
-  useEffect(() => {
-    runLegacyScript()
-  }, [])
-
-`
-    : ''
-  const jsx = jsxLines.length > 0 ? `    <>\n${jsxLines.join('\n')}\n    </>` : '    <></>'
-  return `${imports}// Converted from ${entry}. The JSX below is your page's <body>.
-function App() {
-${effect}  return (
-${jsx}
-  )
-}
-
-export default App
-`
-}
-
-function buildMain(cssImports: string[], hasScripts: boolean): string {
-  const css = cssImports.map((path) => `import '${path}'\n`).join('')
-  if (!hasScripts) {
-    return `import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-${css}import App from './App.jsx'
-
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
-`
-  }
-  return `import { createRoot } from 'react-dom/client'
-${css}import App from './App.jsx'
-
-// <StrictMode> is left out on purpose. In development it runs effects twice,
-// so the code in legacy-script.js would also run twice (for example, adding
-// every click listener two times). Add it back once that code is gone.
-createRoot(document.getElementById('root')).render(<App />)
-`
-}
-
-function buildIndexHtml(
-  html: Element,
-  head: Element,
-  bodyAttributes: DefaultTreeAdapterTypes.Element['attrs'],
-  headScripts: Element[],
-  bodyScripts: Element[],
-  rewriteUrl: (url: string) => string,
-): string {
-  const headLines: string[] = []
-  for (const node of head.childNodes) {
-    if (!isElement(node)) continue
-    for (const attr of node.attrs) {
-      if (attr.name === 'href' || attr.name === 'src') attr.value = rewriteUrl(attr.value)
+  /** CSS files that no page links (directly or through @import). */
+  private noteUnusedCss(multiPage: boolean) {
+    const { files, readText } = this.site
+    const used = new Set(this.usedCss)
+    const queue = [...used]
+    while (queue.length > 0) {
+      const path = queue.pop()!
+      for (const match of readText(path).matchAll(/@import\s+(?:url\(\s*)?['"]?([^'")\s;]+)/g)) {
+        const target = resolveUrl(path, match[1])?.path
+        if (target && files.has(target) && !used.has(target)) {
+          used.add(target)
+          queue.push(target)
+        }
+      }
     }
-    headLines.push(serializeOuter(node))
+    const unused = [...files.keys()].filter((path) => extname(path) === '.css' && !used.has(path))
+    if (unused.length === 0) return
+    const example = unused[0]
+    const how = multiPage
+      ? `add \`import '../${example}'\` at the top of the page component that needs it (in \`src/pages/\`)`
+      : `add \`import './${example}'\` to \`src/main.jsx\``
+    this.notes.check(
+      'A CSS file isn’t used by any page',
+      `It was copied to \`src/\`, but none of your HTML pages linked it. To use it, ${how}.`,
+      unused.map((path) => `src/${path}`).join(', '),
+    )
   }
-  for (const script of headScripts) headLines.push(serializeOuter(script))
-  const hasCharset = head.childNodes.some((node) => isElement(node) && node.tagName === 'meta' && node.attrs.some((a) => a.name === 'charset'))
-  if (!hasCharset) headLines.unshift('<meta charset="UTF-8" />')
+}
 
-  const attrs = (list: Element['attrs']) =>
-    list.map((attr) => ` ${attr.name}="${attr.value.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"`).join('')
+/** A list of unique strings that keeps the order they were added in. */
+class OrderedSet {
+  private readonly items = new Set<string>()
+  /** Returns true if the value was new. */
+  add(value: string): boolean {
+    if (this.items.has(value)) return false
+    this.items.add(value)
+    return true
+  }
+  values(): string[] {
+    return [...this.items]
+  }
+}
 
-  const indent = (lines: string[], pad: string) => lines.map((line) => pad + line).join('\n')
-  return `<!doctype html>
-<html${attrs(html.attrs)}>
-  <head>
-${indent(headLines, '    ')}
-  </head>
-  <body${attrs(bodyAttributes)}>
-    <!-- React puts your page inside this div. "display: contents" makes the div
-         invisible to CSS layout, so your styles work as if it wasn't there. -->
-    <div id="root" style="display: contents"></div>
-${bodyScripts.length > 0 ? indent(bodyScripts.map((s) => serializeOuter(s)), '    ') + '\n' : ''}    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
-`
+function scriptLabels(result: PageResult): string {
+  return result.scripts.map((s) => `\`${s.label}\``).join(', ') || `\`<body onload>\` in \`${result.file}\``
+}
+
+/** `<meta name>` values that describe one page (others, like `viewport`, are for the whole site). */
+const PAGE_META_NAMES = new Set(['description', 'keywords', 'author', 'robots'])
+
+/**
+ * Tags that differ between pages and can be written in a page component's
+ * JSX (React 19 moves them into <head>): the title and meta tags describing
+ * the page (`description`, Open Graph `og:*`, `twitter:*`).
+ */
+function isPerPageHeadTag(element: Element): boolean {
+  if (element.tagName === 'title') return true
+  if (element.tagName !== 'meta') return false
+  const attr = (name: string) => element.attrs.find((a) => a.name === name)?.value.toLowerCase()
+  const name = attr('name')
+  if (name !== undefined) return PAGE_META_NAMES.has(name) || name.startsWith('twitter:')
+  return attr('property')?.startsWith('og:') ?? false
+}
+
+/** `<script src="https://...">` for notes. */
+function shortTag(element: Element): string {
+  const attr = element.attrs.find((a) => a.name === 'src' || a.name === 'href' || a.name === 'name' || a.name === 'rel')
+  return attr ? `<${element.tagName} ${attr.name}="${attr.value}">` : `<${element.tagName}>`
+}
+
+function getOrAdd<K, V>(map: Map<K, V>, key: K, create: () => V): V {
+  let value = map.get(key)
+  if (value === undefined) map.set(key, (value = create()))
+  return value
 }
 
 function packageName(siteName: string): string {
@@ -364,16 +437,4 @@ function packageName(siteName: string): string {
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/^[-._]+|[-._]+$/g, '')
   return (slug || 'my-site') + '-react'
-}
-
-function isElement(node: ChildNode): node is Element {
-  return 'tagName' in node
-}
-
-function findChild(parent: ParentNode, tag: string): Element | undefined {
-  return parent.childNodes.find((node): node is Element => isElement(node) && node.tagName === tag)
-}
-
-function textContent(element: Element): string {
-  return element.childNodes.map((node) => ('value' in node ? node.value : '')).join('')
 }

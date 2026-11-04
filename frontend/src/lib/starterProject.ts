@@ -1,8 +1,9 @@
 // A minimal Vite + React (JavaScript) project, based on create-vite's
 // `react` template with the lint tooling and binary assets left out.
 
-export function createPackageJson(name: string): string {
-  return JSON.stringify({ ...packageJson, name }, null, 2) + '\n'
+export function createPackageJson(name: string, extraDependencies: Record<string, string> = {}): string {
+  const dependencies = { ...packageJson.dependencies, ...extraDependencies }
+  return JSON.stringify({ ...packageJson, name, dependencies }, null, 2) + '\n'
 }
 
 const packageJson = {

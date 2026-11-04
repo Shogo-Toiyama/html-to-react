@@ -1,0 +1,45 @@
+body {
+  margin: 0;
+  font-family: 'Poppins', sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+body.dark {
+  background: #1a1a1a;
+  color: #f2f2f2;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+}
+
+#nav-links a {
+  display: inline-block;
+  color: inherit;
+}
+
+#nav-links.open {
+  outline: 2px solid #fe8d3c;
+}
+
+#hero {
+  background-repeat: repeat;
+  padding: 24px;
+}
+
+#about {
+  background: url("/images/bg.png");
+}
+
+.profile {
+  border-radius: 50%;
+}
+
+#form-result.success {
+  color: green;
+}

@@ -1,51 +1,85 @@
-// Your original JavaScript, moved here from: index.html (inline <script>)
+// Your original JavaScript, moved here from: index2.html (inline <script>)
 //
 // It still changes the page directly (document.querySelector, classList,
 // innerHTML, ...). That works, but React doesn't know about those changes.
 // As you learn React, move this code into your components piece by piece.
-// When this file is empty, delete it along with its import in App.jsx.
+// When this file is empty, delete it along with its import in Index2Page.jsx.
+
+import { trackPage } from '../legacy-page.js'
 
 export function runLegacyScript() {
+  // Converter: when you open another page, React removes this one, but
+  // listeners on window/document and timers would keep running. These
+  // versions remember them so they stop when you leave the page.
+  const legacyPage = trackPage()
+  const { setTimeout, setInterval, requestAnimationFrame } = legacyPage
+
   (() => {
-      const {baseRows, baseCols} = {baseRows: 2, baseCols: 2};
-      
-      const pieceDock = document.querySelector('.rectangle').getBoundingClientRect();
+      const originalPieceW = 100;
+      const baseRows = 2, baseCols = 2;
 
-      const puzzleBase = document.querySelector('.square');
-      const { width: baseW, height: baseH, left: baseX, top: baseY } = puzzleBase.getBoundingClientRect();
-      puzzleBase.style.setProperty('--rows', baseRows);
-      puzzleBase.style.setProperty('--cols', baseCols);
+      const game   = document.querySelector('.game');
+      const base  = document.getElementById('base');
+      const dock   = document.getElementById('dock');
+      const done   = document.getElementById('completed-picture');
+      const status = document.getElementById('status');
 
+      base.style.setProperty('--rows', baseRows);
+      base.style.setProperty('--cols', baseCols);
 
-      const completed_picture = document.getElementById('completed-picture');
-      completed_picture.style.height = `${baseH}px`;
-      completed_picture.style.width = `${baseW}px`;
-      completed_picture.style.left = `${baseX}px`;
-      completed_picture.style.top = `${baseY}px`;
+      let gameRect, boardRect, dockRect;
+      function measure() {
+          gameRect  = game.getBoundingClientRect();
+          boardRect = board.getBoundingClientRect();
+          dockRect  = dock.getBoundingClientRect();
+      }
+      measure();
+
+      const posPct = new Map();
+
+      function pxToPct(x, y) {
+          return {
+          xPct: (x / gameRect.width) * 100,
+          yPct: (y / gameRect.height) * 100
+          };
+      }
+      function pctToPx(xPct, yPct) {
+          return {
+          x: (xPct / 100) * gameRect.width,
+          y: (yPct / 100) * gameRect.height
+          };
+      }
+
+      function setPositionPx(el, x, y) {
+          el.style.left = `${x}px`;
+          el.style.top  = `${y}px`;
+          posPct.set(el, pxToPct(x, y));
+      }
+      function restorePositionFromPct(el) {
+          const p = posPct.get(el); if (!p) return;
+          const {x, y} = pctToPx(p.xPct, p.yPct);
+          el.style.left = `${x}px`;
+          el.style.top  = `${y}px`;
+      }
+
+      function localXY(clientX, clientY) {
+          // client座標を game のローカル座標に変換
+          return { x: clientX - gameRect.left, y: clientY - gameRect.top };
+      }
 
       const puzzlePieces = document.querySelector('.draggable');
-      const originalPieceW = puzzlePieces.getBoundingClientRect().width;
-      console.log(originalPieceW)
 
-      function getPosition(piece) {
-          const left = parseFloat(getComputedStyle(piece).left);
-          const top  = parseFloat(getComputedStyle(piece).top);
-          return { x: left, y: top };
-      }
-
-      function setPosition(piece, x, y, clampToViewport = true) {
-          piece.style.left = `${x}px`;
-          piece.style.top  = `${y}px`;
-      }
-
-      function getRandomPositionInDock(dockRect, pieceW){
-          const minX = dockRect.left;
-          const minY = dockRect.top;
-          const maxX = dockRect.right  - pieceW;
-          const maxY = dockRect.bottom - pieceW;
+      function randomInDock(pieceW) {
+          // dockのローカル座標に変換
+          const dl = dockRect.left - gameRect.left;
+          const dt = dockRect.top  - gameRect.top;
+          const dr = dl + dockRect.width;
+          const db = dt + dockRect.height;
+          const minX = dl, minY = dt;
+          const maxX = dr - pieceW, maxY = db - pieceW;
           const x = Math.random() * (maxX - minX) + minX;
           const y = Math.random() * (maxY - minY) + minY;
-          return { x, y };
+          return {x, y};
       }
 
       const STATE = new WeakMap();
@@ -104,10 +138,6 @@ export function runLegacyScript() {
           if (numOfInPosition == baseRows*baseCols) {
               completed_picture.classList.add("is-visible")
               statusEl.textContent = '🧩🎊 Yay!! You solved!! 🎉✨';
-              document.querySelectorAll('.draggable').forEach(piece => {
-                  piece.style.pointerEvents = 'none';
-                  piece.style.cursor = 'default';
-              });
           }
       }
 
@@ -124,6 +154,8 @@ export function runLegacyScript() {
       });
 
   })();
+
+  return legacyPage.stop
 }
 
 // Code that changes the page directly can't be swapped in while the page is

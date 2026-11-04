@@ -37,6 +37,13 @@ export interface JsxContext {
   usedGlobals: Set<string>
   /** Rewrites a relative file URL for the React project. */
   rewriteUrl(url: string): string
+  /**
+   * On a multi-page site: the React Router path for a link to one of the
+   * site's pages (`about.html#team` → `/about#team`), or null for other URLs.
+   */
+  pageRoute?: (url: string) => string | null
+  /** Set when a `<Link>` was printed, so the file imports it. */
+  usesLink?: boolean
   notes: NoteCollector
 }
 
@@ -102,10 +109,9 @@ export function printChildren(nodes: ChildNode[], ctx: JsxContext, depth: number
   return lines
 }
 
-function printElement(element: Element, ctx: JsxContext, depth: number): string[] {
+export function printElement(element: Element, ctx: JsxContext, depth: number): string[] {
   const pad = INDENT.repeat(depth)
-  const tag = element.tagName
-  const props = elementProps(element, ctx)
+  const { tag, props } = elementProps(element, ctx)
   const children =
     tag === 'textarea' ? [] : tag === 'template' ? (element as Template).content.childNodes : element.childNodes
 
@@ -158,12 +164,24 @@ function printElement(element: Element, ctx: JsxContext, depth: number): string[
 
 // An element may be printed twice (one-line attempt, then multi-line), so its
 // props are converted once and cached; otherwise notes would be counted twice.
-const propsCache = new WeakMap<Element, string[]>()
+const propsCache = new WeakMap<Element, { tag: string; props: string[] }>()
 
-function elementProps(element: Element, ctx: JsxContext): string[] {
+/** The JSX tag (`<a>` to another page becomes `<Link>`) and its props. */
+function elementProps(element: Element, ctx: JsxContext): { tag: string; props: string[] } {
   const cached = propsCache.get(element)
   if (cached) return cached
-  const props = convertAttributes(element, ctx)
+  const href = element.tagName === 'a' ? element.attrs.find((attr) => attr.name === 'href')?.value : undefined
+  const route = href !== undefined && ctx.pageRoute ? ctx.pageRoute(href) : null
+  if (route !== null) {
+    ctx.usesLink = true
+    ctx.notes.change(
+      'Links between your pages became `<Link to="...">`',
+      'A normal `<a href="about.html">` loads a whole new HTML file. React Router\'s `<Link to="/about">` ' +
+        'switches to the other page component right away, without reloading, and the URL still changes.',
+      `${ctx.file}: ${href} → ${route}`,
+    )
+  }
+  const props = convertAttributes(element, ctx, route)
   if (element.tagName === 'textarea') {
     const text = element.childNodes.map((child) => (child as TextNode).value ?? '').join('')
     if (text) props.push(`defaultValue=${quote(text.replace(/^\n/, ''))}`)
@@ -179,8 +197,9 @@ function elementProps(element: Element, ctx: JsxContext): string[] {
       )
     }
   }
-  propsCache.set(element, props)
-  return props
+  const result = { tag: route !== null ? 'Link' : element.tagName, props }
+  propsCache.set(element, result)
+  return result
 }
 
 /** A run of inline content with no space inside, e.g. `Alex<span>.</span>` or `websites`. */
@@ -275,7 +294,7 @@ function findSelectedOption(select: Element): string | null {
   return value ?? option.childNodes.map((child) => (child as TextNode).value ?? '').join('').trim()
 }
 
-function convertAttributes(element: Element, ctx: JsxContext): string[] {
+function convertAttributes(element: Element, ctx: JsxContext, linkRoute: string | null): string[] {
   const tag = element.tagName
   const isSvg = element.namespaceURI === SVG_NS
   const props: string[] = []
@@ -309,6 +328,11 @@ function convertAttributes(element: Element, ctx: JsxContext): string[] {
     }
 
     if (tag === 'option' && name === 'selected') continue
+
+    if (linkRoute !== null && name === 'href') {
+      props.push(`to=${quote(linkRoute)}`)
+      continue
+    }
 
     let propName = renameAttribute(name, isSvg, ctx)
     let propValue = value

@@ -1,0 +1,70 @@
+    html, body {
+      height: auto;
+      min-height: 100dvh;
+    }
+    body {
+      background: #fff;
+      color: #000;
+      display: grid; 
+      place-items: start center; 
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+    }
+    h1 { font-size: 50px; }
+    p { font-size: 30px; }
+    .game {
+        position: relative;
+        width: min(100vw, 800px);
+        margin-inline: auto;
+    }
+    .square{
+        width: min(100vw, 600px);
+        aspect-ratio: 1 / 1;
+        border: 2px solid #ddd;
+
+        --rows: 2;
+        --cols: 2;
+
+        background-image:
+            linear-gradient(to right, #ddd, 1px, transparent 0),
+            linear-gradient(to bottom, #ddd, 1px, transparent 0);
+
+            background-size:
+                calc(100% / var(--cols)) 100%,
+                100% calc(100% / var(--rows));
+        background-position: left top;
+        background-repeat: repeat;
+        position: relative;
+    }
+    .rectangle{
+        width: min(100vw, 800px);
+        aspect-ratio: 4 / 1;
+        border: 2px solid #ddd;
+        display: grid; place-items: center;
+    }
+    .draggable {
+        position: absolute;
+        width: 100px;
+        height: auto;
+        left: 0px; 
+        top: 0px;
+        user-select: none;
+        touch-action: none; 
+        cursor: grab;
+        border: 2px solid #ddd;
+    }
+    .dragging { cursor: grabbing; }
+    .fade {
+        opacity: 0;
+        transition: opacity 1s ease;
+        pointer-events: none;
+    }
+    .fade.is-visible {
+        opacity: 1;
+    }
+    #completed-picture {
+        position: absolute;
+        inset: 0;
+        width: 100%; height: 100%;
+        z-index: 10;
+    }
+  

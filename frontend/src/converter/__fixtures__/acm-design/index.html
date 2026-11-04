@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Website</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="script.js" defer></script>
+</head>
+<body>
+    <section class="intro-section">
+        <!-- TITLE -->
+        <div>
+            <h2 class="subtitle">Hello I'm</h2>
+            <h1 class="name">Timmy</h1>
+        </div>
+
+        <!-- SHORT ABOUT -->
+        <div class="short-about">
+            <p>
+                Los Angeles, CA<br>
+                timmy@gmail.com<br>
+                I am a robot beep boop beep boop.
+            </p>
+            <a href="about.html">More about me >></a>
+        </div>
+    </section>
+
+    <div class="line"></div>
+
+    <section class="projects-section">
+        <h1 class="section-header">Projects</h1>
+        
+        <!-- PROJECT CARDS -->
+        <div id="project-section" class="projects-container">
+            <article class="project-card">
+                <h2 class="project-card-header">AI Modeling</h2>
+                <p>yadadadadada</p>
+                <button onClick="openPopup('project-details-1')" class="project-details-button">More Details</button>
+            </article>
+            <article class="project-card">
+                <h2 class="project-card-header">Research Lab</h2>
+                <p>larp larp larp</p>
+                <button onClick="openPopup('project-details-2')" class="project-details-button">More Details</button>
+            </article>
+            <article class="project-card">
+                <h2 class="project-card-header">Client Web Project</h2>
+                <p>who cares lowkey</p>
+                <button onClick="openPopup('project-details-3')" class="project-details-button">More Details</button>
+            </article>
+        </div>
+    </section>
+
+    <section class="footer">
+        <p>Copyright 2026 Timmy</p>
+    </section>
+
+    <!-- PROJECT POPUPS -->
+    <section id="project-details-1" class="project-popup">
+        <p>AI models do the model</p>
+        <button onClick="closePopup('project-details-1')">Close</button>
+    </section>
+
+    <section id="project-details-2" class="project-popup">
+        <p>woahhhhhh research cutting edge and stuff</p>
+        <button onClick="closePopup('project-details-2')">Close</button>
+    </section>
+
+    <section id="project-details-3" class="project-popup">
+        <p>client ask for website, i make website, client happy, client give money, i happy</p>
+        <button onClick="closePopup('project-details-3')">Close</button>
+    </section>
+</body>
+</html>

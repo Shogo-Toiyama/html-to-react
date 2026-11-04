@@ -5,6 +5,7 @@ import { convertInlineHandler } from './handlers'
 import { convertSite, findHtmlPages } from './index'
 import { buildLegacyScript } from './legacyScript'
 import { NoteCollector } from './notes'
+import { describePages, findSitePages } from './pages'
 import { resolveUrl } from './paths'
 
 const FIXTURES = join(import.meta.dirname, '__fixtures__')
@@ -28,8 +29,22 @@ function text(value: string | Uint8Array | undefined): string {
   return typeof value === 'string' ? value : new TextDecoder().decode(value)
 }
 
-describe.each(['jigsaw', 'portfolio'])('fixture: %s', (name) => {
-  const result = convertSite({ files: loadFixture(name), siteName: name })
+/** The fixture without some files, e.g. to turn a multi-page site into a single page. */
+function withoutFiles(name: string, ...paths: string[]): Map<string, Uint8Array> {
+  const files = loadFixture(name)
+  for (const path of paths) files.delete(path)
+  return files
+}
+
+const SNAPSHOT_CASES: [name: string, files: () => Map<string, Uint8Array>][] = [
+  ['acm-design', () => loadFixture('acm-design')],
+  ['jigsaw', () => loadFixture('jigsaw')],
+  ['portfolio', () => loadFixture('portfolio')],
+  ['portfolio-single-page', () => withoutFiles('portfolio', 'about.html')],
+]
+
+describe.each(SNAPSHOT_CASES)('fixture: %s', (name, files) => {
+  const result = convertSite({ files: files(), siteName: name })
 
   it('matches the expected project files', async () => {
     for (const [path, contents] of result.files) {
@@ -39,13 +54,118 @@ describe.each(['jigsaw', 'portfolio'])('fixture: %s', (name) => {
     const binaries = [...result.files].filter(([, c]) => typeof c !== 'string').map(([p]) => p)
     expect(binaries.sort()).toMatchSnapshot()
   })
+
+  it('produces code that parses', async () => {
+    const { transformWithOxc } = await import('vite')
+    for (const [path, contents] of result.files) {
+      if (!/\.jsx?$/.test(path) || typeof contents !== 'string') continue
+      const out = await transformWithOxc(contents, path, { lang: path.endsWith('.jsx') ? 'jsx' : 'js' })
+      expect(out.code.length).toBeGreaterThan(0)
+    }
+  })
 })
 
-describe('portfolio details', () => {
+describe('multi-page site (acm-design)', () => {
+  const result = convertSite({ files: loadFixture('acm-design'), siteName: 'ACMDesign' })
+  const file = (path: string) => text(result.files.get(path))
+
+  it('turns every page into a component with a route', () => {
+    expect(result.pages).toEqual([
+      { file: 'index.html', route: '/', component: 'HomePage' },
+      { file: 'about.html', route: '/about', component: 'AboutPage' },
+    ])
+    const app = file('src/App.jsx')
+    expect(app).toContain('<Route path="/" element={<HomePage />} />')
+    expect(app).toContain('<Route path="/about" element={<AboutPage />} />')
+    expect(file('src/main.jsx')).toContain('<BrowserRouter>')
+    expect(JSON.parse(file('package.json')).dependencies['react-router']).toBeDefined()
+  })
+
+  it('turns links between pages into <Link to>', () => {
+    const home = file('src/pages/HomePage.jsx')
+    expect(home).toContain(`import { Link } from 'react-router'`)
+    expect(home).toContain('<Link to="/about">More about me &gt;&gt;</Link>')
+    expect(file('src/pages/AboutPage.jsx')).toContain('<Link to="/">Back</Link>')
+    expect(result.notes.some((note) => note.title.includes('page was not found'))).toBe(false)
+  })
+
+  it('keeps each page\'s script with that page', () => {
+    expect(result.files.has('src/pages/HomePage.legacy-script.js')).toBe(true)
+    expect(result.files.has('src/pages/AboutPage.legacy-script.js')).toBe(false)
+    expect(file('src/pages/HomePage.legacy-script.js')).toContain(`import { trackPage } from '../legacy-page.js'`)
+    expect(file('src/pages/HomePage.jsx')).toContain('return runLegacyScript()')
+    expect(file('src/legacy-page.js')).toContain('export function trackPage()')
+  })
+
+  it('shares CSS that every page links, and notes unused CSS', () => {
+    expect(file('src/main.jsx')).toContain(`import './style.css'`)
+    expect(file('src/pages/AboutPage.jsx')).not.toContain('style.css')
+    expect(result.files.has('src/about.css')).toBe(true)
+    expect(result.notes.find((note) => note.title.includes('isn’t used by any page'))?.examples).toEqual(['src/about.css'])
+  })
+
+  it('writes one index.html for the whole site', () => {
+    const html = file('index.html')
+    expect(html).toContain('<title>My Website</title>')
+    expect(html).toContain('src="/src/main.jsx"')
+    expect(result.files.has('about.html')).toBe(false)
+  })
+})
+
+describe('multi-page site (portfolio)', () => {
   const result = convertSite({ files: loadFixture('portfolio'), siteName: 'Portfolio Site' })
+  const home = text(result.files.get('src/pages/HomePage.jsx'))
+  const about = text(result.files.get('src/pages/AboutPage.jsx'))
+
+  it('gives each page its own <title> when they differ', () => {
+    expect(home).toContain('<title>Alex Kim | Portfolio</title>')
+    expect(text(result.files.get('index.html'))).not.toContain('<title>')
+  })
+
+  it('moves <body> attributes that only one page has into that page', () => {
+    expect(text(result.files.get('index.html'))).toContain('<body>')
+    expect(home).toContain(`document.body.setAttribute("class", "light")`)
+    expect(about).not.toContain('document.body')
+  })
+
+  it('keeps same-page #links as <a>', () => {
+    expect(home).toContain('<a href="#about">About</a>')
+    expect(home).toContain('<Link to="/about">More about me</Link>')
+  })
+
+  it('warns about head tags that were only on some pages', () => {
+    const note = result.notes.find((n) => n.title.includes('`<head>` tags now load on every page'))
+    expect(note?.examples.join(' ')).toContain('confetti')
+  })
+})
+
+describe('multi-page site (jigsaw)', () => {
+  const result = convertSite({ files: loadFixture('jigsaw'), siteName: 'jigsaw' })
+
+  it('warns that page-only CSS now applies everywhere', () => {
+    const note = result.notes.find((n) => n.title.includes('CSS from one page'))
+    expect(note?.examples.join(' ')).toContain('<style> in index2.html')
+    expect(result.files.has('src/pages/HomePage.css')).toBe(true)
+    expect(result.files.has('src/pages/Index2Page.css')).toBe(true)
+  })
+})
+
+describe('single-page site (portfolio without about.html)', () => {
+  const result = convertSite({ files: withoutFiles('portfolio', 'about.html'), siteName: 'Portfolio Site' })
   const app = text(result.files.get('src/App.jsx'))
   const legacy = text(result.files.get('src/legacy-script.js'))
   const html = text(result.files.get('index.html'))
+
+  it('does not use React Router', () => {
+    expect(result.files.has('src/pages/HomePage.jsx')).toBe(false)
+    expect(app).not.toContain('react-router')
+    expect(JSON.parse(text(result.files.get('package.json'))).dependencies['react-router']).toBeUndefined()
+    expect(legacy).not.toContain('trackPage')
+  })
+
+  it('notes the link to the missing page', () => {
+    expect(result.notes.find((n) => n.title === 'A linked page was not found')?.examples).toEqual(['index.html: about.html'])
+  })
 
   it('converts attributes', () => {
     expect(app).toContain('className="site-header"')
@@ -100,13 +220,30 @@ describe('portfolio details', () => {
   it('names the package after the folder', () => {
     expect(JSON.parse(text(result.files.get('package.json'))).name).toBe('portfolio-site-react')
   })
+})
 
-  it('produces JSX that parses', async () => {
-    const { transformWithOxc } = await import('vite')
-    for (const path of ['src/App.jsx', 'src/main.jsx', 'src/legacy-script.js']) {
-      const out = await transformWithOxc(text(result.files.get(path)), path, { lang: 'jsx' })
-      expect(out.code.length).toBeGreaterThan(0)
-    }
+describe('pages', () => {
+  it('finds every HTML page, top-level index first', () => {
+    expect(findSitePages(['b.html', 'sub/x.html', 'index.html', 'a.htm', 'img/a.png'])).toEqual([
+      'index.html',
+      'a.htm',
+      'b.html',
+      'sub/x.html',
+    ])
+  })
+
+  it('names routes and components after the file', () => {
+    expect(describePages(['index.html', 'my-projects.html', 'blog/index.html', 'blog/post.html', '2024.html'])).toEqual([
+      { file: 'index.html', route: '/', component: 'HomePage' },
+      { file: 'my-projects.html', route: '/my-projects', component: 'MyProjectsPage' },
+      { file: 'blog/index.html', route: '/blog', component: 'BlogPage' },
+      { file: 'blog/post.html', route: '/blog/post', component: 'BlogPostPage' },
+      { file: '2024.html', route: '/2024', component: 'Page2024Page' },
+    ])
+  })
+
+  it('numbers components whose names would clash', () => {
+    expect(describePages(['about.html', 'About.htm']).map((page) => page.component)).toEqual(['AboutPage', 'About2Page'])
   })
 })
 

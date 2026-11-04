@@ -1,22 +1,45 @@
 # How your site was converted to React
 
-This project was made from `index.html`. It should look and work the same as your original site. Your original folder was not changed.
+This project was made from your 2 pages (`index.html`, `about.html`). It should look and work the same as your original site. Your original folder was not changed.
+
+## Your pages
+
+Each page is now a component. React Router (in `src/App.jsx`) shows the component whose path matches the URL.
+
+| Page | URL | Component |
+|---|---|---|
+| `index.html` | `/` | `src/pages/HomePage.jsx` |
+| `about.html` | `/about` | `src/pages/AboutPage.jsx` |
 
 ## Where things went
 
 | Before | Now |
 |---|---|
-| `index.html` → `<body>` | `src/App.jsx` (as JSX) |
-| `index.html` → `<head>` | `index.html` |
-| `js/script.js` | `src/legacy-script.js` |
 | `css/style.css` | `src/css/style.css` |
+| `index.html` → `<body>` | `src/pages/HomePage.jsx` (as JSX) |
+| `js/script.js` | `src/pages/HomePage.legacy-script.js` |
+| `about.html` → `<body>` | `src/pages/AboutPage.jsx` (as JSX) |
+| The `<head>` of every page | `index.html` (one for the whole site) |
 | Images and other files (3) | `public/` (same folder layout) |
 
 ## What changed, and why
 
+### CSS `url(...)` paths now start with `/`
+
+Images and fonts moved to the `public/` folder, which Vite serves from the root of the site. A path like `/img/bg.png` means `public/img/bg.png`.
+
+- `css/style.css: url(../images/bg.png)`
+
 ### `class` became `className` (5×)
 
 JSX is JavaScript, where `class` is a reserved word, so React uses `className` for CSS classes.
+
+### Links between your pages became `<Link to="...">` (2×)
+
+A normal `<a href="about.html">` loads a whole new HTML file. React Router's `<Link to="/about">` switches to the other page component right away, without reloading, and the URL still changes.
+
+- `index.html: about.html → /about`
+- `about.html: index.html → /`
 
 ### Inline event handlers became functions (4×)
 
@@ -38,9 +61,9 @@ React spells multi-word attributes in camelCase, e.g. `tabindex` → `tabIndex`,
 
 Images and other files moved to the `public/` folder, which Vite serves from the root of the site. So `./img/me.png` became `/img/me.png` (the file is at `public/img/me.png`).
 
-- `images/bg.png`
-- `images/profile.png`
-- `favicon.png`
+- `index.html: images/bg.png`
+- `index.html: images/profile.png`
+- `index.html: favicon.png`
 
 ### `style="..."` became a style object
 
@@ -73,6 +96,16 @@ React blocks `javascript:` URLs for security. The link now points to `#`, and th
 
 - `index.html: <a href="javascript:void(0)">`
 
+### Each page's `<title>` moved into its component
+
+All pages now share one `index.html`. A `<title>` (or `<meta>`) written in a component's JSX is moved into `<head>` by React while that page is on screen, so each page keeps its own title.
+
+### `<body>` attributes moved into the page component
+
+All pages now share one `<body>`. Attributes that only some pages had (like `class="dark"`) are added by that page's component when it opens and removed when you leave.
+
+- `index.html: class="light"`
+
 ### "Wait for the page to load" code now runs right away
 
 Code inside `DOMContentLoaded` or `window.onload` used to wait until the page was ready. In React, your code starts after the page is already on screen, so the event would never fire. The function is now called directly.
@@ -81,25 +114,27 @@ Code inside `DOMContentLoaded` or `window.onload` used to wait until the page wa
 
 ### Added `let` for variables that were never declared
 
-Plain `<script>` code allows `x = 5` without declaring `x` first. React code runs in strict mode, where that is an error. The converter added a `let` line at the top of `legacy-script.js`.
+Plain `<script>` code allows `x = 5` without declaring `x` first. React code runs in strict mode, where that is an error. The converter added a `let` line at the top of `runLegacyScript()`.
 
 - `wordIndex, charIndex`
 
-### CSS `url(...)` paths now start with `/`
+### Your pages became components, and React Router switches between them
 
-Images and fonts moved to the `public/` folder, which Vite serves from the root of the site. A path like `/img/bg.png` means `public/img/bg.png`.
-
-- `css/style.css: url(../images/bg.png)`
+Each HTML page is now a component in `src/pages/`. `src/App.jsx` lists which URL shows which component. When you click a link, React swaps the component instead of loading a new HTML file, and the URL in the address bar still changes.
 
 ## Please check
 
-- **Links to other pages won’t work yet.** This version converts one page (index.html). Links to other HTML pages will show the converted page instead. Support for multiple pages is coming.
-  - `about.html`
-- **Some files were not copied.** Other HTML pages and files that aren’t part of the website (like notes or config files) were left in your original folder.
-  - `README.md, about.html`
+- **Some `<head>` tags now load on every page.** All pages now share one `index.html`. These tags were only on some of your pages, so check that they don't change how the other pages look or work.
+  - `index.html: <meta>, index.html: <meta name="viewport">, index.html: <link rel="icon">, index.html: <link rel="preconnect">, index.html: <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap">, index.html: <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js">`
+- **CSS from one page now also applies to the other pages.** React shows all your pages inside one HTML document, and the CSS of every page is loaded at the start. CSS that used to be on only some pages now affects all of them. If a page looks different than before, make those selectors more specific (for example `.about-title` instead of `h1`). Moving your styles into Tailwind classes later also fixes this.
+  - `css/style.css (index.html)`
+- **Some files were not copied.** Files that aren’t part of the website (like notes or config files) were left in your original folder.
+  - `README.md`
 
 ## What’s next
 
-Your JavaScript is in `src/legacy-script.js` and still changes the page directly (`document.querySelector`, `classList`, `innerHTML`, ...). React doesn’t know about those changes, which is fine for now. As you learn React, you’ll move this code into components using state and event handlers, one piece at a time. When `legacy-script.js` is empty, delete it and its import in `App.jsx`.
+Your JavaScript is in the `*.legacy-script.js` file next to each page component and still changes the page directly (`document.querySelector`, `classList`, `innerHTML`, ...). React doesn’t know about those changes, which is fine for now. As you learn React, you’ll move this code into components using state and event handlers, one piece at a time. When a legacy script is empty, delete it and its import in the page component.
 
-Try splitting `src/App.jsx` into smaller components, for example a `Header` and a `Footer`.
+Parts that appear on several pages, like a header or footer, make great components: write one `Header` component and use `<Header />` on every page.
+
+**Publishing your site:** every URL (like `/about`) must be answered with `index.html`, so React Router can show the right page. Most hosts call this a “single-page app” or “rewrite all routes to index.html” setting. Without it, opening `/about` directly shows a “404 Not Found” page.

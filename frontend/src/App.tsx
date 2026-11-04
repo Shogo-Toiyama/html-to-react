@@ -6,6 +6,8 @@ import { convertSite, findHtmlPages } from './converter'
 import { DevSession, type SessionPhase } from './lib/devSession'
 import { previewTabUrl } from './lib/previewTab'
 import {
+  containsFolder,
+  createNewFolder,
   ensureReadWritePermission,
   fileExists,
   isFolderEmpty,
@@ -21,6 +23,9 @@ type Prompt =
   | { kind: 'empty-folder'; handle: FileSystemDirectoryHandle }
   | { kind: 'html-site'; handle: FileSystemDirectoryHandle; pages: string[] }
   | { kind: 'not-a-project'; handle: FileSystemDirectoryHandle }
+
+/** Where the converted project goes: a new folder next to the site, or a folder the participant picks. */
+type ConvertTarget = 'new-folder' | 'choose-folder'
 
 const PHASE_LABELS: Record<SessionPhase, string> = {
   creating: 'Creating project files…',
@@ -149,14 +154,20 @@ function App() {
     startSession(handle, { keepTerminal: true })
   }
 
-  async function convertToReact(source: FileSystemDirectoryHandle, entry: string) {
-    let target: FileSystemDirectoryHandle
+  /** Opens a folder picker; returns null (after showing any error) if the user cancels. */
+  async function pickDirectory(options: DirectoryPickerOptions): Promise<FileSystemDirectoryHandle | null> {
     try {
-      target = await window.showDirectoryPicker!({ id: 'react-output', mode: 'readwrite' })
+      return await window.showDirectoryPicker!(options)
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setNotice(errorMessage(error))
-      return
+      return null
     }
+  }
+
+  /** The participant chooses (or creates) an empty folder for the React version. */
+  async function convertIntoChosenFolder(source: FileSystemDirectoryHandle) {
+    const target = await pickDirectory({ id: 'react-output', mode: 'readwrite' })
+    if (!target) return
     if (await target.isSameEntry(source)) {
       setNotice('That’s your original site folder. Please create or choose a different, empty folder.')
       return
@@ -165,16 +176,48 @@ function App() {
       setNotice(`“${target.name}” isn’t empty. Please create or choose an empty folder for the React version.`)
       return
     }
+    await convertToReact(source, target)
+  }
 
-    const log = beginCreating(target, `Converting "${source.name}/${entry}" to React in "${target.name}"…`)
+  /**
+   * Creates "<site> - React" next to the site folder. The browser can't reach a
+   * folder's parent on its own, so the participant selects that parent once.
+   */
+  async function convertIntoNewFolder(source: FileSystemDirectoryHandle) {
+    const parent = await pickDirectory({ id: 'react-output-parent', mode: 'readwrite', startIn: source })
+    if (!parent) return
+    if (await parent.isSameEntry(source)) {
+      setNotice(`That’s “${source.name}” itself. In the dialog, go up one folder and select the folder that contains it.`)
+      return
+    }
+    if (!(await containsFolder(parent, source))) {
+      setNotice(`“${source.name}” isn’t inside “${parent.name}”. Please select the folder that contains “${source.name}”.`)
+      return
+    }
+    let target: FileSystemDirectoryHandle
+    try {
+      target = await createNewFolder(parent, `${source.name} - React`)
+    } catch (error) {
+      setNotice(`Could not create a folder in “${parent.name}”: ${errorMessage(error)}`)
+      return
+    }
+    await convertToReact(source, target)
+  }
+
+  async function convertToReact(source: FileSystemDirectoryHandle, target: FileSystemDirectoryHandle) {
+    const log = beginCreating(target, `Converting "${source.name}" to React in "${target.name}"…`)
     try {
       const snapshot = await scanFolder(source)
       const files = new Map<string, Uint8Array>()
       for (const [path, file] of snapshot) files.set(path, await readBytes(file))
-      const result = convertSite({ files, siteName: source.name, entry })
+      const result = convertSite({ files, siteName: source.name })
       await writeLocalFiles(target, result.files, { onWritten: (path) => log(`  + ${path}\n`) })
 
       const checks = result.notes.filter((note) => note.kind === 'check').length
+      if (result.pages.length > 1) {
+        log(`\x1b[36m● ${result.pages.length} pages, each now a component in src/pages/:\x1b[0m\n`)
+        for (const page of result.pages) log(`    ${page.file} → ${page.route} (${page.component})\n`)
+      }
       log(`\x1b[32m✔ Converted. Open CONVERSION.md to see what changed and why.\x1b[0m\n`)
       if (checks > 0) log(`\x1b[33m! ${checks} thing(s) to check — see “Please check” in CONVERSION.md.\x1b[0m\n`)
     } catch (error) {
@@ -214,7 +257,9 @@ function App() {
               onPick={pickFolder}
               onReopen={(handle) => void openFolder(handle)}
               onCreateStarter={(handle) => void createStarter(handle)}
-              onConvert={(handle, entry) => void convertToReact(handle, entry)}
+              onConvert={(handle, where) =>
+                void (where === 'new-folder' ? convertIntoNewFolder(handle) : convertIntoChosenFolder(handle))
+              }
               onDismissPrompt={() => setPrompt(null)}
             />
           ) : (
@@ -290,7 +335,7 @@ interface WelcomeProps {
   onPick: () => void
   onReopen: (handle: FileSystemDirectoryHandle) => void
   onCreateStarter: (handle: FileSystemDirectoryHandle) => void
-  onConvert: (handle: FileSystemDirectoryHandle, entry: string) => void
+  onConvert: (handle: FileSystemDirectoryHandle, where: ConvertTarget) => void
   onDismissPrompt: () => void
 }
 
@@ -388,12 +433,11 @@ function Welcome(props: WelcomeProps) {
 interface ConvertPromptProps {
   prompt: Extract<Prompt, { kind: 'html-site' }>
   notice: string | null
-  onConvert: (handle: FileSystemDirectoryHandle, entry: string) => void
+  onConvert: (handle: FileSystemDirectoryHandle, where: ConvertTarget) => void
   onCancel: () => void
 }
 
 function ConvertPrompt({ prompt, notice, onConvert, onCancel }: ConvertPromptProps) {
-  const [entry, setEntry] = useState(prompt.pages[0])
   const name = prompt.handle.name
   return (
     <div className="welcome">
@@ -403,30 +447,27 @@ function ConvertPrompt({ prompt, notice, onConvert, onCancel }: ConvertPromptPro
         folder.
       </p>
       {prompt.pages.length > 1 && (
-        <label className="field">
-          <span>Page to convert</span>
-          <select value={entry} onChange={(event) => setEntry(event.target.value)}>
-            {prompt.pages.map((page) => (
-              <option key={page} value={page}>
-                {page}
-              </option>
-            ))}
-          </select>
-          <span className="hint">This version converts one page at a time.</span>
-        </label>
+        <p className="hint">
+          Found {prompt.pages.length} pages ({prompt.pages.join(', ')}). Each one becomes a component, and React Router
+          switches between them.
+        </p>
       )}
       <ol className="steps">
         <li>
-          Click <strong>Choose folder for React version</strong>.
+          Click <strong>Create “{name} - React”</strong>.
         </li>
         <li>
-          In the dialog, create a <strong>new folder</strong> (for example “{name}-react”) and select it.
+          The dialog opens inside “{name}”. Go <strong>up one folder</strong> and click <strong>Open</strong> (or{' '}
+          <strong>Select</strong>). The new folder is created next to “{name}”.
         </li>
       </ol>
       {notice && <p className="notice">{notice}</p>}
       <div className="actions">
-        <button type="button" className="button primary" onClick={() => onConvert(prompt.handle, entry)}>
-          Choose folder for React version
+        <button type="button" className="button primary" onClick={() => onConvert(prompt.handle, 'new-folder')}>
+          Create “{name} - React”
+        </button>
+        <button type="button" className="button" onClick={() => onConvert(prompt.handle, 'choose-folder')}>
+          Choose another empty folder
         </button>
         <button type="button" className="button" onClick={onCancel}>
           Cancel
