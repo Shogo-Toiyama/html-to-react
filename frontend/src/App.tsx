@@ -165,6 +165,20 @@ function App() {
   }
 
   async function openFolder(handle: FileSystemDirectoryHandle) {
+    try {
+      await openFolderUnsafe(handle)
+    } catch (error) {
+      // e.g. the folder was moved or deleted since it was picked or remembered.
+      const missing = error instanceof DOMException && error.name === 'NotFoundError'
+      setNotice(
+        missing
+          ? `Could not find “${handle.name}”. It may have been moved or deleted — please choose the folder again.`
+          : `Could not open “${handle.name}”: ${errorMessage(error)}`,
+      )
+    }
+  }
+
+  async function openFolderUnsafe(handle: FileSystemDirectoryHandle) {
     if (!(await ensureReadWritePermission(handle))) {
       setNotice('Edit permission is needed to run and update your project. Please allow it and try again.')
       return
