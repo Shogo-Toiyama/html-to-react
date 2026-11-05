@@ -10,12 +10,22 @@ const JsxParser = Parser.extend(jsx())
 export function validateSuggestion(request: SuggestRequest, suggestion: Suggestion): string[] {
   const errors: string[] = []
   const editable = new Set(request.editable.map((file) => file.path))
+  const legacyCode = request.context
+    .filter((file) => /legacy-script\.js$/.test(file.path))
+    .map((file) => file.content)
+    .join('\n')
 
-  // ---- Paths ----
+  // ---- Paths: which files this step may write ----
   for (const file of suggestion.files) {
     const isNewComponent = /^src\/components\/[A-Za-z0-9_/-]+\.jsx$/.test(file.path) && !file.path.includes('..')
-    if (!editable.has(file.path) && !isNewComponent) {
-      errors.push(`${file.path}: you may only change the editable files or create .jsx files in src/components/.`)
+    const allowed =
+      request.step === 'components' || request.step === 'props' ? editable.has(file.path) || isNewComponent : editable.has(file.path)
+    if (!allowed) {
+      errors.push(
+        request.step === 'components' || request.step === 'props'
+          ? `${file.path}: you may only change the editable files or create .jsx files in src/components/.`
+          : `${file.path}: you may only change the editable files.`,
+      )
     }
   }
   const returned = new Set(suggestion.files.map((file) => file.path))
@@ -26,8 +36,14 @@ export function validateSuggestion(request: SuggestRequest, suggestion: Suggesti
     if (!suggestion.changes.some((change) => change.path === path)) errors.push(`${path} is in files but not in changes.`)
   }
 
-  // ---- Syntax ----
-  for (const file of suggestion.files) {
+  if (request.step === 'tailwind-cleanup') {
+    errors.push(...validateCssCleanup(request, suggestion))
+    return errors
+  }
+
+  // ---- JSX steps ----
+  const jsxFiles = suggestion.files.filter((file) => /\.jsx?$/.test(file.path))
+  for (const file of jsxFiles) {
     try {
       JsxParser.parse(file.content, { ecmaVersion: 'latest', sourceType: 'module' })
     } catch (error) {
@@ -35,8 +51,8 @@ export function validateSuggestion(request: SuggestRequest, suggestion: Suggesti
     }
   }
 
-  // ---- Every <Component> tag is imported or defined in its file (else: "X is not defined" at runtime) ----
-  for (const file of suggestion.files) {
+  // Every <Component> tag is imported or defined in its file (else: "X is not defined" at runtime).
+  for (const file of jsxFiles) {
     const known = new Set([
       ...matches(file.content, /\bimport\s+([A-Z]\w*)/g),
       ...[...file.content.matchAll(/\bimport\s*(?:\w+\s*,\s*)?\{([^}]*)\}/g)].flatMap((m) =>
@@ -49,27 +65,68 @@ export function validateSuggestion(request: SuggestRequest, suggestion: Suggesti
     }
   }
 
-  // ---- Nothing the legacy script needs may disappear ----
+  // Nothing the legacy script needs may disappear.
   const final = finalProject(request, suggestion)
   const allCode = [...final.values()].join('\n')
   const originalCode = request.editable.map((file) => file.content).join('\n')
   for (const id of matches(originalCode, /\bid=["']([^"']+)["']/g)) {
     if (!allCode.includes(`"${id}"`) && !allCode.includes(`'${id}'`)) errors.push(`The id "${id}" is missing.`)
   }
-  for (const className of matches(originalCode, /\bclassName=["']([^"']+)["']/g)) {
-    if (!allCode.includes(className)) errors.push(`The className "${className}" is missing.`)
-  }
   for (const name of matches(originalCode, /\bwindow\.(\w+)\s*\(/g)) {
     if (!allCode.includes(`window.${name}`)) errors.push(`The call window.${name}(...) is missing.`)
   }
+  const originalClasses = new Set(
+    [...matches(originalCode, /\bclassName=["']([^"']+)["']/g)].flatMap((value) => value.split(/\s+/).filter(Boolean)),
+  )
+  for (const className of originalClasses) {
+    // Tailwind replaces classes on purpose, but must keep the ones the legacy script uses.
+    const required = request.step !== 'tailwind' || usesWord(legacyCode, className)
+    if (required && !usesWord(allCode, className)) {
+      errors.push(
+        request.step === 'tailwind'
+          ? `The class "${className}" is used by the legacy script, so it must stay.`
+          : `The className "${className}" is missing.`,
+      )
+    }
+  }
 
-  // ---- Imports point at files that exist ----
-  for (const file of suggestion.files) {
+  // Imports point at files that exist.
+  for (const file of jsxFiles) {
     for (const specifier of matches(file.content, /\bfrom\s+["'](\.{1,2}\/[^"']+)["']/g)) {
       if (!/\.(jsx|js)$/.test(specifier)) continue
       const target = resolve(file.path, specifier)
       if (!final.has(target) && !request.context.some((f) => f.path === target)) {
         errors.push(`${file.path} imports ${specifier}, but ${target} doesn't exist.`)
+      }
+    }
+  }
+  return errors
+}
+
+/** The CSS cleanup may only remove rules nothing uses, and must keep Tailwind's own lines. */
+function validateCssCleanup(request: SuggestRequest, suggestion: Suggestion): string[] {
+  const errors: string[] = []
+  const jsxCode = request.context.filter((file) => /\.jsx$/.test(file.path)).map((file) => file.content).join('\n')
+  const legacyCode = request.context.filter((file) => /legacy-script\.js$/.test(file.path)).map((file) => file.content).join('\n')
+  const usedClasses = new Set(
+    [...matches(jsxCode, /\bclassName=["']([^"']+)["']/g)].flatMap((value) => value.split(/\s+/).filter(Boolean)),
+  )
+  for (const file of suggestion.files) {
+    const before = request.editable.find((f) => f.path === file.path)?.content ?? ''
+    if (/@import\s+["']tailwindcss/.test(before) && !/@import\s+["']tailwindcss/.test(file.content)) {
+      errors.push(`${file.path}: keep the Tailwind @import lines.`)
+    }
+    let depth = 0
+    for (const char of file.content) {
+      if (char === '{') depth += 1
+      if (char === '}') depth -= 1
+      if (depth < 0) break
+    }
+    if (depth !== 0) errors.push(`${file.path}: the CSS braces { } don't match.`)
+    for (const className of matches(before, /\.([A-Za-z_][\w-]*)/g)) {
+      const stillUsed = usedClasses.has(className) || usesWord(legacyCode, className)
+      if (stillUsed && !new RegExp(`\\.${escapeRegExp(className)}(?![\\w-])`).test(file.content)) {
+        errors.push(`${file.path}: .${className} is still used, so its rules must stay.`)
       }
     }
   }
@@ -85,6 +142,15 @@ function finalProject(request: SuggestRequest, suggestion: Suggestion): Map<stri
 
 function matches(text: string, pattern: RegExp): Set<string> {
   return new Set([...text.matchAll(pattern)].map((match) => match[1]))
+}
+
+/** `word` appears in `text` as a whole class-name-like token. */
+function usesWord(text: string, word: string): boolean {
+  return new RegExp(`(^|[^\\w-])${escapeRegExp(word)}(?![\\w-])`).test(text)
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function resolve(from: string, specifier: string): string {

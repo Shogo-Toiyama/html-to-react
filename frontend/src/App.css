@@ -26,6 +26,9 @@
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--heading);
   font-weight: 700;
   color: var(--text-strong);
@@ -734,4 +737,34 @@
   border-radius: var(--radius);
   background: #fff1f0;
   border: 1px solid #f5c2c0;
+}
+
+/* Step 4: what to convert */
+.tw-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+
+.tw-scope label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.tw-scope select {
+  font: inherit;
+  font-weight: 400;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-width: 200px;
+}
+
+.brand-icon {
+  width: 26px;
+  height: 26px;
 }

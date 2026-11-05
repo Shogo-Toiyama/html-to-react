@@ -347,7 +347,10 @@ function App() {
       style={{ '--guide-width': `${guideWidth}px` } as CSSProperties}
     >
       <header className="topbar">
-        <span className="brand">React Launchpad</span>
+        <span className="brand">
+          <img className="brand-icon" src="/favicon.png" alt="" />
+          React Launchpad
+        </span>
         {folderName && !showWelcome && <span className="folder-chip">📁 {folderName}</span>}
         {phase && !showWelcome && <span className={`status status-${phase}`}>{PHASE_LABELS[phase]}</span>}
         <span className="spacer" />

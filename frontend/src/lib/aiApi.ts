@@ -1,8 +1,19 @@
 // The contract between Launchpad and its backend (functions/api/*), shared by
 // both sides. Types and constants only: no browser or Worker APIs here.
 
-/** Which workshop step asks for help: split into components, or merge repeats into one component with props. */
-export type AiStep = 'components' | 'props'
+/**
+ * What the AI is asked to do:
+ * - `components`: split pages into components (Step 2)
+ * - `props`: merge repeated parts into one component with props (Step 3)
+ * - `tailwind`: replace CSS with Tailwind classes in one component or the whole site (Step 4)
+ * - `tailwind-cleanup`: delete CSS rules nothing uses anymore (Step 4, after the whole site)
+ */
+export type AiStep = 'components' | 'props' | 'tailwind' | 'tailwind-cleanup'
+
+export const AI_STEPS: AiStep[] = ['components', 'props', 'tailwind', 'tailwind-cleanup']
+
+/** `target` value meaning "the whole site". */
+export const WHOLE_SITE = '*'
 
 export interface ProjectFile {
   path: string
@@ -11,6 +22,8 @@ export interface ProjectFile {
 
 export interface SuggestRequest {
   step: AiStep
+  /** For `tailwind`: the one file to convert, or WHOLE_SITE. */
+  target?: string
   /** Files the AI may change (pages, existing components). */
   editable: ProjectFile[]
   /** Files shown for context only (legacy scripts, App.jsx, CSS class names...). */

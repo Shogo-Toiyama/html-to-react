@@ -11,6 +11,8 @@ export interface AiHistoryEntry {
   /** ISO time it was applied. */
   appliedAt: string
   step: AiStep
+  /** For `tailwind`: the converted file, or `*` for the whole site. */
+  target?: string
   model: string
   summary: string
   components: SuggestedComponent[]
@@ -57,6 +59,7 @@ export async function applySuggestion(
   step: AiStep,
   model: string,
   suggestion: Suggestion,
+  target?: string,
 ): Promise<AiHistoryEntry> {
   const id = new Date().toISOString().replace(/[:.]/g, '-')
   const created: string[] = []
@@ -77,6 +80,7 @@ export async function applySuggestion(
     id,
     appliedAt: new Date().toISOString(),
     step,
+    target,
     model,
     summary: suggestion.summary,
     components: suggestion.components,

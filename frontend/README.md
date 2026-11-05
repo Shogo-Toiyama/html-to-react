@@ -54,6 +54,8 @@ Cloudflare Pages → Settings → Variables and Secrets:
 | `WORKSHOP_CODE` | Code participants type once (e.g. `buildwithai`) |
 | `RATE_LIMIT_KV` | Optional KV binding: 20 requests / 10 min per device (the room shares one IP, so limits use a random id stored in the browser) |
 
+Step 4 (Tailwind): converted and starter projects already list `tailwindcss` + `@tailwindcss/vite` in `package.json` (no install wait in the workshop). **Set up Tailwind** (`src/lib/tailwindSetup.ts`, no AI) adds the plugin to `vite.config.js` and loads Tailwind's theme and utilities, without the preflight reset, so the page looks the same until classes are used (missing packages are added if needed). The AI then converts one component or the whole site (`tailwind` step; classes the legacy script uses must stay), and after the whole site it offers to delete unused CSS (`tailwind-cleanup`). Two WebContainer workarounds in `devSession.ts`: Vite is restarted when `vite.config.*` changes (it runs with the wrapper config), and the CSS files that load Tailwind are rewritten after every JSX/JS/HTML change, because Tailwind otherwise misses classes added while the server runs.
+
 Requests over `MAX_REQUEST_CHARS` (150 KB of code, `src/lib/aiApi.ts`) are not sent: the panel shows a warning with the largest files instead of trimming anything.
 
 Local: copy `.dev.vars.example` to `.dev.vars`, then `npm run dev:pages` (builds and serves `dist` with the functions). Plain `npm run dev` has no `/api`.

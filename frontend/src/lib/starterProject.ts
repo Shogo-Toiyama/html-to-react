@@ -21,6 +21,10 @@ const packageJson = {
     'react-dom': '^19.2.8',
   },
   devDependencies: {
+    // Installed from the start so the Tailwind step (Workshop 4) doesn't wait for npm install.
+    // It's only switched on (vite.config.js + CSS) when that step sets it up.
+    '@tailwindcss/vite': '^4.3.4',
+    tailwindcss: '^4.3.4',
     '@types/react': '^19.2.18',
     '@types/react-dom': '^19.2.7',
     '@vitejs/plugin-react': '^6.1.1',

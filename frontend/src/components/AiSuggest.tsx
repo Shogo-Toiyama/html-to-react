@@ -1,4 +1,4 @@
-// "Ask AI" box at the bottom of the Components and Props steps: Claude
+// "Ask AI" box used in the Components, Props and Tailwind steps: Claude
 // suggests a change, the participant reviews it, and Apply writes it to their
 // folder (with Undo). Every applied change is logged in .launchpad/history.json.
 
@@ -7,7 +7,13 @@ import { MAX_REQUEST_CHARS, requestSize, type AiStep, type SuggestRequest, type 
 import { applySuggestion, readHistory, undoSuggestion, type AiHistoryEntry } from '../lib/aiChanges'
 import { AiRequestError, collectRequest, requestSuggestion, savedWorkshopCode, saveWorkshopCode } from '../lib/aiClient'
 
-const COPY: Record<AiStep, { title: string; button: string; intro: string }> = {
+export interface AiCopy {
+  title: string
+  button: string
+  intro: string
+}
+
+const COPY: Record<'components' | 'props', AiCopy> = {
   components: {
     title: 'Ask AI to split your page',
     button: 'Suggest components',
@@ -30,11 +36,22 @@ type State =
   | { kind: 'applied'; entry: AiHistoryEntry }
   | { kind: 'error'; message: string }
 
-export function AiSuggest({ dir, step }: { dir: FileSystemDirectoryHandle; step: AiStep }) {
+interface AiSuggestProps {
+  dir: FileSystemDirectoryHandle
+  step: AiStep
+  /** For `tailwind`: the file to convert, or WHOLE_SITE. Runs and history are kept per target. */
+  target?: string
+  /** Text for steps without a default (the Tailwind step). */
+  copy?: AiCopy
+  /** Called after Apply or Undo, so a parent can refresh what it shows. */
+  onChange?(): void
+}
+
+export function AiSuggest({ dir, step, target, copy: customCopy, onChange }: AiSuggestProps) {
   const [state, setState] = useState<State>({ kind: 'idle' })
   const [code, setCode] = useState(savedWorkshopCode)
   const [history, setHistory] = useState<AiHistoryEntry[]>([])
-  const copy = COPY[step]
+  const copy = customCopy ?? COPY[step as 'components' | 'props']
 
   useEffect(() => {
     let cancelled = false
@@ -52,13 +69,13 @@ export function AiSuggest({ dir, step }: { dir: FileSystemDirectoryHandle; step:
     setState({ kind: 'working', message: 'Reading your files…', chars: 0 })
     let request: SuggestRequest
     try {
-      request = await collectRequest(dir, step)
+      request = await collectRequest(dir, step, target)
     } catch (error) {
       setState({ kind: 'error', message: `Couldn’t read your files: ${String(error)}` })
       return
     }
     if (request.editable.length === 0) {
-      setState({ kind: 'error', message: 'No page files found in src/pages/ or src/App.jsx.' })
+      setState({ kind: 'error', message: 'No files to work on were found.' })
       return
     }
     const size = requestSize(request)
@@ -91,9 +108,10 @@ export function AiSuggest({ dir, step }: { dir: FileSystemDirectoryHandle; step:
   async function apply(suggestion: Suggestion, model: string) {
     setState({ kind: 'applying' })
     try {
-      const entry = await applySuggestion(dir, step, model, suggestion)
+      const entry = await applySuggestion(dir, step, model, suggestion, target)
       setHistory((h) => [...h, entry])
       setState({ kind: 'applied', entry })
+      onChange?.()
     } catch (error) {
       setState({ kind: 'error', message: `Couldn’t write the files: ${String(error)}` })
     }
@@ -104,12 +122,13 @@ export function AiSuggest({ dir, step }: { dir: FileSystemDirectoryHandle; step:
       const undone = await undoSuggestion(dir, entry)
       setHistory((h) => h.map((e) => (e.id === undone.id ? undone : e)))
       setState({ kind: 'idle' })
+      onChange?.()
     } catch (error) {
       setState({ kind: 'error', message: `Couldn’t undo: ${String(error)}` })
     }
   }
 
-  const pastForStep = history.filter((entry) => entry.step === step)
+  const pastForStep = history.filter((entry) => entry.step === step && (entry.target ?? undefined) === target)
   /** The latest suggestion applied in this step and not undone. */
   const lastApplied = pastForStep.findLast((entry) => !entry.undoneAt)
 

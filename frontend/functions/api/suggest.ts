@@ -10,6 +10,7 @@
 // show progress while Claude works and the connection never sits idle.
 
 import {
+  AI_STEPS,
   DEVICE_ID_HEADER,
   MAX_REQUEST_CHARS,
   requestSize,
@@ -104,5 +105,5 @@ function isSuggestRequest(value: unknown): value is SuggestRequest {
   const v = value as SuggestRequest
   const isFiles = (files: unknown) =>
     Array.isArray(files) && files.every((f) => typeof f?.path === 'string' && typeof f?.content === 'string')
-  return (v?.step === 'components' || v?.step === 'props') && isFiles(v.editable) && isFiles(v.context) && v.editable.length > 0
+  return AI_STEPS.includes(v?.step) && isFiles(v.editable) && isFiles(v.context) && v.editable.length > 0
 }

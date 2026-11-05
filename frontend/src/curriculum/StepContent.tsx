@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react'
 import { AiSuggest } from '../components/AiSuggest'
+import { TailwindPanel } from '../components/TailwindPanel'
 
 export interface ConversionSummary {
   pages: number
@@ -248,41 +249,34 @@ function PropsStep(ctx: StepContext) {
   )
 }
 
-function TailwindStep() {
+function TailwindStep(ctx: StepContext) {
   return (
     <>
       <p>
         Tailwind gives you small classes for styling, so you can style a component right in its JSX instead of a
         separate CSS file.
       </p>
-      <Code>{`<button className="px-4 py-2 rounded-full bg-violet-400 text-white hover:opacity-80">
-  More Details
-</button>`}</Code>
-      <h3>Set up Tailwind</h3>
-      <ol>
-        <li>
-          In <code>package.json</code>, add to <code>"devDependencies"</code>:
-          <Code>{`"tailwindcss": "^4.3.4",
-"@tailwindcss/vite": "^4.3.4"`}</Code>
-          Save, and Launchpad installs them.
-        </li>
-        <li>
-          In <code>vite.config.js</code>:
-          <Code>{`import tailwindcss from '@tailwindcss/vite'
+      <Code>{`/* CSS */
+.project-card { padding: 40px; border-radius: 10px; }
 
-plugins: [react(), tailwindcss()],`}</Code>
+/* Tailwind: right in the JSX */
+<article className="p-[40px] rounded-[10px]">`}</Code>
+      <ul>
+        <li>
+          <code>p-4</code> = 16px padding, <code>text-center</code>, <code>flex</code>, <code>gap-4</code>…
         </li>
         <li>
-          At the top of your main CSS file (for example <code>src/style.css</code>):
-          <Code>{`@import "tailwindcss";`}</Code>
-          Tailwind resets some browser defaults (like heading sizes), so parts of your page may look a little
-          different.
+          Exact values go in brackets: <code>w-[250px]</code>, <code>text-[#8878aa]</code>.
         </li>
-      </ol>
-      <h3>Try it</h3>
+        <li>
+          States are prefixes: <code>hover:bg-violet-500</code>.
+        </li>
+      </ul>
+      {ctx.project && <TailwindPanel key={ctx.project.dir.name} dir={ctx.project.dir} />}
+      <h3>Try it yourself</h3>
       <p>
-        Pick one element, replace its CSS rules with Tailwind classes in <code>className</code>, and delete the old
-        rules.
+        Pick an element, add Tailwind classes to its <code>className</code>, save, and watch the preview. Then delete
+        the CSS rule it no longer needs.
       </p>
     </>
   )

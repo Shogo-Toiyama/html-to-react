@@ -23,7 +23,8 @@ export async function scanFolder(dir: FileSystemDirectoryHandle): Promise<Folder
 
 async function walk(dir: FileSystemDirectoryHandle, prefix: string, out: FolderSnapshot) {
   for await (const [name, handle] of dir.entries()) {
-    if (IGNORED_NAMES.has(name)) continue
+    // `.crswap` is Chrome's temporary file while it writes a file; it is renamed away right after.
+    if (IGNORED_NAMES.has(name) || name.endsWith('.crswap')) continue
     const path = prefix + name
     if (handle.kind === 'directory') {
       await walk(handle, path + '/', out)

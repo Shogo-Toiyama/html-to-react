@@ -180,13 +180,39 @@ export class DevSession {
     for (const path of removed) {
       await wc.fs.rm(path, { force: true })
     }
+    await this.refreshTailwind(changed, removed)
     this.cb.onSynced(changed, removed)
 
     if (changed.includes('package.json') || !this.installed) {
       this.info('Files changed — reinstalling packages.')
       await this.restart(true)
+    } else if (changed.some((path) => /^vite\.config\.[cm]?[jt]s$/.test(path))) {
+      // Vite runs with our wrapper config (previewBridge.ts), so it doesn't see
+      // edits to the project's own vite.config.js. Restart it ourselves.
+      this.info('vite.config changed — restarting the dev server.')
+      await this.restart(false)
     } else if (!this.devProcess) {
       await this.restart(false)
+    }
+  }
+
+  /**
+   * Inside WebContainer, Tailwind's Vite plugin doesn't pick up classes added to
+   * a file after the dev server started (its full scan at startup works). When
+   * a source file changes, rewrite the CSS files that load Tailwind, unchanged:
+   * that makes Tailwind rebuild with a full scan, so new classes appear.
+   */
+  private async refreshTailwind(changed: string[], removed: string[]) {
+    const wc = this.wc!
+    if (![...changed, ...removed].some((path) => /\.(jsx?|tsx?|html)$/.test(path))) return
+    for (const path of this.snapshot.keys()) {
+      if (!path.endsWith('.css') || changed.includes(path)) continue
+      try {
+        const css = await wc.fs.readFile(path, 'utf-8')
+        if (css.includes('tailwindcss')) await wc.fs.writeFile(path, css)
+      } catch {
+        // The file may have just been removed.
+      }
     }
   }
 

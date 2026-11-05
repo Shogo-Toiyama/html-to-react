@@ -9,6 +9,7 @@ import {
   type ProjectFile,
   type SuggestRequest,
   type Suggestion,
+  WHOLE_SITE,
 } from './aiApi'
 import { readBytes, scanFolder } from './localFolder'
 
@@ -46,16 +47,34 @@ function deviceId(): string {
   }
 }
 
-/** The page files the AI may change, plus read-only context (legacy scripts, routes). */
-export async function collectRequest(dir: FileSystemDirectoryHandle, step: AiStep): Promise<SuggestRequest> {
+/**
+ * The files the AI may change for this step, plus read-only context:
+ * - components / props: pages and components; legacy scripts and routes as context
+ * - tailwind: one JSX file (`target`) or all of them; CSS and legacy scripts as context
+ * - tailwind-cleanup: the CSS files; all JSX and legacy scripts as context
+ */
+export async function collectRequest(dir: FileSystemDirectoryHandle, step: AiStep, target?: string): Promise<SuggestRequest> {
   const snapshot = await scanFolder(dir)
   const decoder = new TextDecoder()
   const paths = [...snapshot.keys()].filter((path) => path.startsWith('src/')).sort()
   const multiPage = paths.some((path) => /^src\/pages\/[^/]+\.jsx$/.test(path))
-  const isEditable = (path: string) =>
+  const isComponentFile = (path: string) =>
     /^src\/components\/.+\.jsx$/.test(path) || (multiPage ? /^src\/pages\/[^/]+\.jsx$/.test(path) : path === 'src/App.jsx')
-  const isContext = (path: string) =>
-    /legacy-script\.js$/.test(path) || (multiPage && path === 'src/App.jsx')
+  const isLegacy = (path: string) => /legacy-script\.js$/.test(path)
+  const isCss = (path: string) => path.endsWith('.css')
+
+  let isEditable: (path: string) => boolean
+  let isContext: (path: string) => boolean
+  if (step === 'tailwind') {
+    isEditable = (path) => isComponentFile(path) && (!target || target === WHOLE_SITE || path === target)
+    isContext = (path) => isCss(path) || isLegacy(path)
+  } else if (step === 'tailwind-cleanup') {
+    isEditable = isCss
+    isContext = (path) => isComponentFile(path) || isLegacy(path)
+  } else {
+    isEditable = isComponentFile
+    isContext = (path) => isLegacy(path) || (multiPage && path === 'src/App.jsx')
+  }
 
   const read = async (path: string): Promise<ProjectFile> => ({
     path,
@@ -63,9 +82,19 @@ export async function collectRequest(dir: FileSystemDirectoryHandle, step: AiSte
   })
   return {
     step,
+    target,
     editable: await Promise.all(paths.filter(isEditable).map(read)),
-    context: await Promise.all(paths.filter(isContext).map(read)),
+    context: await Promise.all(paths.filter((path) => !isEditable(path) && isContext(path)).map(read)),
   }
+}
+
+/** JSX files a participant can pick for "convert one component" (Step 4). */
+export async function listComponentFiles(dir: FileSystemDirectoryHandle): Promise<string[]> {
+  const paths = [...(await scanFolder(dir)).keys()].filter((path) => path.startsWith('src/')).sort()
+  const multiPage = paths.some((path) => /^src\/pages\/[^/]+\.jsx$/.test(path))
+  return paths.filter(
+    (path) => /^src\/components\/.+\.jsx$/.test(path) || (multiPage ? /^src\/pages\/[^/]+\.jsx$/.test(path) : path === 'src/App.jsx'),
+  )
 }
 
 export type SuggestProgress = { type: 'status'; message: string } | { type: 'progress'; chars: number }
