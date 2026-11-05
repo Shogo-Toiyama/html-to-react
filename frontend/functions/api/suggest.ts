@@ -19,7 +19,7 @@ import {
   type SuggestRequest,
 } from '../../src/lib/aiApi'
 import { allowRequest } from '../../server/rateLimit'
-import { CODE_MODEL, emptyUsage, suggest, SuggestError, type SuggestEvent } from '../../server/suggest'
+import { emptyUsage, modelFor, suggest, SuggestError, type SuggestEvent } from '../../server/suggest'
 
 interface Env {
   ANTHROPIC_API_KEY?: string
@@ -60,13 +60,14 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const encoder = new TextEncoder()
   const emit = (event: SuggestEvent) => void writer.write(encoder.encode(JSON.stringify(event) + '\n'))
 
+  const model = modelFor(body.step, env)
   const startedAt = Date.now()
   const usage = emptyUsage()
   let outcome = 'ok'
   const work = (async () => {
     try {
-      const suggestion = await suggest(env.ANTHROPIC_API_KEY!, body, emit, usage)
-      emit({ type: 'result', suggestion, model: CODE_MODEL })
+      const suggestion = await suggest(env.ANTHROPIC_API_KEY!, body, emit, usage, model)
+      emit({ type: 'result', suggestion, model })
     } catch (error) {
       outcome = error instanceof SuggestError ? 'rejected' : 'error'
       const message =

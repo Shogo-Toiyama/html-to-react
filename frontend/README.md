@@ -44,7 +44,7 @@ Not supported yet: `<script type="module">`.
 
 ## AI backend (Cloudflare Pages Functions)
 
-`functions/api/suggest.ts` (logic in `server/`) asks Claude Sonnet 5.5 to split a page into components (Step 2) or to merge repeated parts into one component with props (Step 3). The answer is structured JSON (files + a change log), checked in `server/validate.ts` (JSX parses; no `id`, `className` or `window.*` call lost; imports exist) and sent back to Claude once if it fails. Progress streams to the browser as NDJSON. In the side panel, **Apply** writes the files (old versions backed up to `.launchpad/backups/`), **Undo** restores them, and every change is logged in `.launchpad/history.json` (and localStorage). The preview's **🧩 Components** toggle outlines the component under the mouse with its props (no AI).
+`functions/api/suggest.ts` (logic in `server/`) asks Claude (Sonnet 5.5 by default; the model is chosen per step, see below) to split a page into components (Step 2) or to merge repeated parts into one component with props (Step 3). The answer is structured JSON (files + a change log), checked in `server/validate.ts` (JSX parses; no `id`, `className` or `window.*` call lost; imports exist) and sent back to Claude once if it fails. Progress streams to the browser as NDJSON. In the side panel, **Apply** writes the files (old versions backed up to `.launchpad/backups/`), **Undo** restores them, and every change is logged in `.launchpad/history.json` (and localStorage). The preview's **🧩 Components** toggle outlines the component under the mouse with its props (no AI).
 
 Cloudflare Pages → Settings → Variables and Secrets:
 
@@ -53,6 +53,9 @@ Cloudflare Pages → Settings → Variables and Secrets:
 | `ANTHROPIC_API_KEY` | Secret |
 | `WORKSHOP_CODE` | Code participants type once (e.g. `buildwithai`) |
 | `RATE_LIMIT_KV` | Optional KV binding: 20 requests / 10 min per device (the room shares one IP, so limits use a random id stored in the browser) |
+| `MODEL_COMPONENTS`, `MODEL_PROPS`, `MODEL_TAILWIND`, `MODEL_TAILWIND_CLEANUP`, `MODEL_CHAT` | Optional: the model for one step, as a model id or `haiku` / `sonnet`. Unset = `DEFAULT_MODELS` in `server/suggest.ts`. The model that answered is in the call log (`models`). |
+
+Choosing models: `model-lab/` (next to `frontend/`) runs the steps with different models on the sample site and checks the result in Chrome. On `acm-design`, Haiku 5.5 passed the validator and matched the original's look on all four steps, at about a tenth of Sonnet's cost; the chat has not been tested with Haiku.
 
 Step 4 (Tailwind): converted and starter projects already list `tailwindcss` + `@tailwindcss/vite` in `package.json` (no install wait in the workshop). **Set up Tailwind** (`src/lib/tailwindSetup.ts`, no AI) adds the plugin to `vite.config.js` and loads Tailwind's theme and utilities, without the preflight reset, so the page looks the same until classes are used (missing packages are added if needed). The AI then converts one component or the whole site (`tailwind` step; classes the legacy script uses must stay), and after the whole site it offers to delete unused CSS (`tailwind-cleanup`). Two WebContainer workarounds in `devSession.ts`: Vite is restarted when `vite.config.*` changes (it runs with the wrapper config), and the CSS files that load Tailwind are rewritten after every JSX/JS/HTML change, because Tailwind otherwise misses classes added while the server runs.
 

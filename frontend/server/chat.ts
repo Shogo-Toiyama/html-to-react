@@ -5,7 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { ChatEvent, ChatProposal, ChatRequest, ChatTurn } from '../src/lib/aiApi'
 import { CHAT_SYSTEM, filesBlock, PROPOSE_TOOL } from './chatPrompts'
-import { addUsage, CODE_MODEL, SuggestError, type SuggestUsage } from './suggest'
+import { addUsage, SuggestError, type SuggestUsage } from './suggest'
 import { validateChatProposal } from './validate'
 
 const CACHE = { type: 'ephemeral' } as const
@@ -43,6 +43,7 @@ export async function chat(
   request: ChatRequest,
   emit: (event: ChatEvent) => void,
   usage: SuggestUsage,
+  model: string,
 ): Promise<ChatProposal | null> {
   const client = new Anthropic({ apiKey })
   const messages = buildMessages(request)
@@ -52,7 +53,7 @@ export async function chat(
     let chars = 0
     let lastReport = 0
     const stream = client.beta.messages.stream({
-      model: CODE_MODEL,
+      model,
       max_tokens: 32000,
       // Re-runs the request on another model if a safety classifier declines it.
       betas: ['server-side-fallback-2026-07-01'],

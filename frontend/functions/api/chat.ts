@@ -16,7 +16,7 @@ import {
 } from '../../src/lib/aiApi'
 import { chat } from '../../server/chat'
 import { allowRequest } from '../../server/rateLimit'
-import { CODE_MODEL, emptyUsage, SuggestError } from '../../server/suggest'
+import { emptyUsage, modelFor, SuggestError } from '../../server/suggest'
 
 interface Env {
   ANTHROPIC_API_KEY?: string
@@ -60,15 +60,16 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   const encoder = new TextEncoder()
   const emit = (event: ChatEvent) => void writer.write(encoder.encode(JSON.stringify(event) + '\n'))
 
+  const model = modelFor('chat', env)
   const startedAt = Date.now()
   const usage = emptyUsage()
   let outcome = 'ok'
   const work = (async () => {
     try {
-      const proposal = await chat(env.ANTHROPIC_API_KEY!, body, emit, usage)
+      const proposal = await chat(env.ANTHROPIC_API_KEY!, body, emit, usage, model)
       if (proposal) {
         outcome = 'proposal'
-        emit({ type: 'proposal', proposal, model: CODE_MODEL })
+        emit({ type: 'proposal', proposal, model })
       }
       emit({ type: 'done' })
     } catch (error) {

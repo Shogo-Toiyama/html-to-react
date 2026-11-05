@@ -2,12 +2,39 @@
 // and gives the model one chance to fix problems.
 
 import Anthropic from '@anthropic-ai/sdk'
-import type { SuggestRequest, Suggestion } from '../src/lib/aiApi'
+import type { AiStep, SuggestRequest, Suggestion } from '../src/lib/aiApi'
 import { SUGGESTION_SCHEMA, systemPrompt, userPrompt } from './prompts'
 import { validateSuggestion } from './validate'
 
-/** Code changes: Claude Sonnet 5.5. (Claude Haiku 5.5 is for light text-only tasks.) */
-export const CODE_MODEL = 'claude-sonnet-5-5'
+const SONNET = 'claude-sonnet-5-5'
+const HAIKU = 'claude-haiku-5-5'
+
+/** What asks the model: one of the four workshop steps, or the Step 5 chat. */
+export type ModelTask = AiStep | 'chat'
+
+/**
+ * Which model each task uses by default. Change one line here to switch a step, or set an
+ * environment variable (`MODEL_COMPONENTS`, `MODEL_PROPS`, `MODEL_TAILWIND`,
+ * `MODEL_TAILWIND_CLEANUP`, `MODEL_CHAT`) to a model id or `haiku` / `sonnet` without redeploying code.
+ * Tested on the sample site (model-lab/): Haiku matched Sonnet on all four steps, at ~1/10 the cost.
+ * The chat has not been tested with Haiku.
+ */
+export const DEFAULT_MODELS: Record<ModelTask, string> = {
+  components: SONNET,
+  props: SONNET,
+  tailwind: SONNET,
+  'tailwind-cleanup': SONNET,
+  chat: SONNET,
+}
+
+const ALIASES: Record<string, string> = { sonnet: SONNET, haiku: HAIKU }
+
+/** The model for a task: its environment variable if set, else the default above. */
+export function modelFor(task: ModelTask, env: object = {}): string {
+  const value = (env as Record<string, unknown>)[`MODEL_${task.toUpperCase().replace(/-/g, '_')}`]
+  const override = typeof value === 'string' ? value.trim() : ''
+  return override ? (ALIASES[override.toLowerCase()] ?? override) : DEFAULT_MODELS[task]
+}
 
 /** Progress events streamed to the browser while Claude works (one JSON object per line). */
 export type SuggestEvent =
@@ -45,7 +72,7 @@ export function addUsage(total: SuggestUsage, message: Anthropic.Beta.BetaMessag
   const u = message.usage
   const cacheRead = u.cache_read_input_tokens ?? 0
   const cacheWrite = u.cache_creation_input_tokens ?? 0
-  const [inPrice, outPrice] = PRICES[message.model] ?? PRICES[CODE_MODEL]
+  const [inPrice, outPrice] = PRICES[message.model] ?? PRICES[SONNET]
   total.attempts += 1
   if (!total.models.includes(message.model)) total.models.push(message.model)
   total.inputTokens += u.input_tokens
@@ -63,6 +90,7 @@ export async function suggest(
   request: SuggestRequest,
   emit: (event: SuggestEvent) => void,
   usage: SuggestUsage,
+  model: string,
 ): Promise<Suggestion> {
   const client = new Anthropic({ apiKey })
   const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content: userPrompt(request) }]
@@ -72,7 +100,7 @@ export async function suggest(
     let chars = 0
     let lastReport = 0
     const stream = client.beta.messages.stream({
-      model: CODE_MODEL,
+      model,
       max_tokens: 64000,
       // Re-runs the request on another model if a safety classifier declines it.
       betas: ['server-side-fallback-2026-07-01'],
