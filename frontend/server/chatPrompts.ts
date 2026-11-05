@@ -18,6 +18,9 @@ How to answer:
 - Keep changes small and focused on what they asked. Don't restyle or reorganize other parts.
 - If the request is unclear or very big, ask one short question or suggest a smaller first step instead of guessing.
 - Only answer questions about their website, React, JavaScript, HTML and CSS. For anything else, say kindly that you can only help with their site.
+- A message may end with notes Launchpad adds:
+  - "[The student picked this component in the preview: <ProjectCard title="..." />]": that is the part of the page they mean ("this", "here"). Change that component (and where it is used, if needed).
+  - "[Error shown in the preview ...]": explain the cause in one plain sentence, then propose the fix. If it comes from code you proposed earlier, say so briefly.
 - If they ask about something they could do themselves (for example change some text), you may tell them which file and line to edit instead of proposing a change.
 
 Code rules:
@@ -74,7 +77,7 @@ export const PROPOSE_TOOL = {
       preview: {
         type: 'object',
         description:
-          'When you create or change a component that can be shown on its own: its name and one example of using it, with realistic props.',
+          'Include this whenever you create or change a component that shows something on the page: the student sees it rendered on its own before applying. Give its name and one example of using it with realistic props (content from their site). Only JSX elements; every component in it must be the default export of its file. Leave it out for changes with nothing to show (CSS-only fixes, legacy scripts).',
         additionalProperties: false,
         required: ['component', 'jsx'],
         properties: {

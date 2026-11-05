@@ -19,6 +19,16 @@ export type PreviewMessage =
     }
   /** Esc was pressed inside the preview (key presses there never reach Launchpad's window). */
   | { source: 'launchpad-preview'; type: 'escape' }
+  /**
+   * The participant clicked a component while picking. `label` shows its props,
+   * e.g. `<ProjectCard title="AI Modeling" />`. `component` is null when picking was cancelled.
+   */
+  | { source: 'launchpad-preview'; type: 'picked'; component: string | null; label?: string }
+  /**
+   * An error on the page: a build error in Vite's overlay, or an uncaught error
+   * while running. `message` is null when the build error is gone.
+   */
+  | { source: 'launchpad-preview'; type: 'error'; kind: 'build' | 'runtime'; message: string | null }
 
 /** What Launchpad can ask the preview to do. */
 export type HostCommand =
@@ -28,6 +38,8 @@ export type HostCommand =
   | { type: 'inspect'; enabled: boolean }
   /** Blink every instance of a component (by name) twice. */
   | { type: 'highlight'; component: string }
+  /** Outline components under the mouse; the next click picks one (instead of clicking the page). */
+  | { type: 'pick'; enabled: boolean }
 
 /** Messages from Launchpad to the preview. */
 export type HostMessage = HostCommand & { source: 'launchpad-host' }
@@ -55,7 +67,9 @@ const BRIDGE_SCRIPT = `;(() => {
   window.addEventListener('popstate', report)
   window.addEventListener('hashchange', report)
   window.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') window.parent.postMessage({ source: 'launchpad-preview', type: 'escape' }, '*')
+    if (event.key !== 'Escape') return
+    if (picking) return stopPicking(null)
+    window.parent.postMessage({ source: 'launchpad-preview', type: 'escape' }, '*')
   })
 
   window.addEventListener('message', (event) => {
@@ -77,6 +91,9 @@ const BRIDGE_SCRIPT = `;(() => {
       if (!inspecting) hide()
     } else if (message.type === 'highlight') {
       highlight(message.component)
+    } else if (message.type === 'pick') {
+      picking = message.enabled
+      if (!picking && !inspecting) hide()
     }
   })
 
@@ -86,6 +103,7 @@ const BRIDGE_SCRIPT = `;(() => {
   // nearest component the participant wrote, and outline everything it renders.
   const SKIP = new Set(['App', 'ScrollToTop', 'Routes', 'Route', 'RenderedRoute', 'Router', 'BrowserRouter', 'Navigate', 'Outlet'])
   let inspecting = false
+  let picking = false
   let box = null
   let label = null
   let lastTarget = null
@@ -153,11 +171,69 @@ const BRIDGE_SCRIPT = `;(() => {
   }
   let frame = 0
   document.addEventListener('mousemove', (event) => {
-    if (!inspecting) return
+    if (!inspecting && !picking) return
     cancelAnimationFrame(frame)
     frame = requestAnimationFrame(() => show(event.target))
   }, true)
-  window.addEventListener('scroll', () => inspecting && lastTarget && show(lastTarget), true)
+  window.addEventListener('scroll', () => (inspecting || picking) && lastTarget && show(lastTarget), true)
+
+  // ---- Picking: the next click chooses a component instead of clicking the page ----
+  const stopPicking = (found) => {
+    picking = false
+    if (!inspecting) hide()
+    window.parent.postMessage({
+      source: 'launchpad-preview',
+      type: 'picked',
+      component: found ? found.name : null,
+      label: found ? describe(found.name, found.fiber.memoizedProps) : undefined,
+    }, '*')
+  }
+  for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+    document.addEventListener(type, (event) => {
+      if (!picking) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (type === 'click') stopPicking(componentOf(fiberOf(event.target)))
+    }, true)
+  }
+
+  // ---- Errors: tell Launchpad, so the participant can ask AI to fix them ----
+  let lastError = ''
+  const reportError = (kind, message) => {
+    const text = message ? String(message).slice(0, 4000) : null
+    if (text && text === lastError) return
+    lastError = text || ''
+    window.parent.postMessage({ source: 'launchpad-preview', type: 'error', kind, message: text }, '*')
+  }
+  window.addEventListener('error', (event) => {
+    const where = event.filename ? '\\n    at ' + event.filename.replace(location.origin, '') + ':' + event.lineno : ''
+    reportError('runtime', (event.error && event.error.stack) || (event.message + where))
+  })
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason
+    reportError('runtime', (reason && reason.stack) || String(reason))
+  })
+  // Vite shows build errors (e.g. a JSX syntax error) in <vite-error-overlay>.
+  let overlayShown = false
+  const checkOverlay = () => {
+    const overlay = document.querySelector('vite-error-overlay')
+    if (overlay && overlay.shadowRoot) {
+      const text = (sel) => (overlay.shadowRoot.querySelector(sel) || {}).textContent || ''
+      const message = [text('.message'), text('.file'), text('.frame')].filter((part) => part.trim()).join('\\n')
+      if (message) {
+        overlayShown = true
+        reportError('build', message)
+      }
+    } else if (overlayShown) {
+      overlayShown = false
+      reportError('build', null)
+    }
+  }
+  let overlayCheck = 0
+  new MutationObserver(() => {
+    clearTimeout(overlayCheck)
+    overlayCheck = setTimeout(checkOverlay, 100)
+  }).observe(document.documentElement, { childList: true, subtree: true })
   document.addEventListener('mouseleave', hide)
 
   // ---- Highlight: blink every instance of one component twice ----
@@ -204,12 +280,18 @@ const BRIDGE_SCRIPT = `;(() => {
 })()
 `
 
+/** Proposed (not yet applied) files from the chat live here, one folder per proposal (see lib/drafts.ts). */
+export const DRAFTS_DIR = `${RUNTIME_DIR}/drafts`
+
 const WRAPPER_CONFIG = `// Added by React Launchpad inside the in-browser container only (it is not in
-// your folder). It loads your vite.config.js and adds a small script that tells
-// Launchpad which page the preview is showing.
+// your folder). It loads your vite.config.js, adds a small script that tells
+// Launchpad which page the preview is showing, and serves AI drafts.
+import fs from 'node:fs'
+import path from 'node:path'
 import { defineConfig, loadConfigFromFile, mergeConfig } from 'vite'
 
 const bridge = ${JSON.stringify(BRIDGE_SCRIPT)}
+const draftsRoot = path.join(process.cwd(), ${JSON.stringify(DRAFTS_DIR)}) + path.sep
 
 export default defineConfig(async (env) => {
   const loaded = await loadConfigFromFile(env, undefined, process.cwd())
@@ -219,6 +301,23 @@ export default defineConfig(async (env) => {
         name: 'launchpad-preview-bridge',
         apply: 'serve',
         transformIndexHtml: () => [{ tag: 'script', attrs: { type: 'module' }, children: bridge, injectTo: 'head-prepend' }],
+      },
+      {
+        // A draft folder holds only the files the AI changed (at their project
+        // paths). A relative import of any other file goes to the real project.
+        name: 'launchpad-drafts',
+        apply: 'serve',
+        enforce: 'pre',
+        async resolveId(source, importer, options) {
+          if (!importer || !source.startsWith('.')) return null
+          const from = importer.split('?')[0]
+          if (!from.startsWith(draftsRoot)) return null
+          const [file, query] = source.split(/(?=\\?)/)
+          const target = path.resolve(path.dirname(from), file)
+          if (!target.startsWith(draftsRoot) || fs.existsSync(target)) return null
+          const inProject = path.join(process.cwd(), ...path.relative(draftsRoot, target).split(path.sep).slice(1))
+          return this.resolve(inProject + (query ?? ''), importer, { ...options, skipSelf: true })
+        },
       },
     ],
   })

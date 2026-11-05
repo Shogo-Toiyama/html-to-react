@@ -120,8 +120,10 @@ export type ChatEvent =
   | { type: 'done' }
   | { type: 'error'; error: string; code: 'ai-failed' }
 
-/** Longest message a participant can send (characters). */
+/** Longest message a participant can type (characters). */
 export const MAX_CHAT_MESSAGE = 2000
+/** Room for what's attached to a message (a picked component, an error), on top of MAX_CHAT_MESSAGE. */
+export const MAX_CHAT_ATTACHMENTS = 5000
 /** Most turns sent with each message; older ones are left out. */
 export const MAX_CHAT_TURNS = 16
 

@@ -4,10 +4,18 @@
 import type { ChatProposal, ChatTurn } from './aiApi'
 import { readTextFile, writeLocalFile } from './localFolder'
 
+/** Something attached to a participant's message. */
+export type ChatAttachment =
+  /** A component picked in the preview; `file` when it has its own file. */
+  | { kind: 'component'; name: string; label: string; file?: string }
+  /** An error shown in the preview ("Ask AI to fix"). */
+  | { kind: 'error'; errorKind: 'build' | 'runtime'; message: string; page: string | null }
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
+  attachments?: ChatAttachment[]
   /** Code change proposed with this reply. */
   proposal?: ChatProposal
   model?: string
@@ -55,7 +63,8 @@ export function toTurns(messages: ChatMessage[]): ChatTurn[] {
   return messages
     .filter((message) => message.text.trim() || message.proposal)
     .map((message) => {
-      if (message.role === 'user' || !message.proposal) return { role: message.role, text: message.text }
+      if (message.role === 'user') return { role: 'user', text: withAttachments(message) }
+      if (!message.proposal) return { role: message.role, text: message.text }
       const files = message.proposal.changes.map((change) => change.path).join(', ')
       const state =
         message.proposalState === 'applied'
@@ -68,4 +77,18 @@ export function toTurns(messages: ChatMessage[]): ChatTurn[] {
         text: `${message.text}\n\n[Proposed change: ${message.proposal.summary} Files: ${files}. ${state}]`.trim(),
       }
     })
+}
+
+/** The note the AI reads for each attachment (see "notes Launchpad adds" in server/chatPrompts.ts). */
+function withAttachments(message: ChatMessage): string {
+  const notes = (message.attachments ?? []).map((attachment) => {
+    if (attachment.kind === 'component') {
+      const where = attachment.file ? ` (defined in ${attachment.file})` : ''
+      return `[The student picked this component in the preview: ${attachment.label || `<${attachment.name} />`}${where}]`
+    }
+    const what = attachment.errorKind === 'build' ? 'a build error from Vite' : 'an error while the page ran'
+    const page = attachment.page ? ` on the page ${attachment.page}` : ''
+    return `[Error shown in the preview (${what}${page}):\n${attachment.message}]`
+  })
+  return [message.text, ...notes].join('\n\n')
 }

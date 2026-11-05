@@ -6,6 +6,7 @@
 import {
   chatRequestSize,
   DEVICE_ID_HEADER,
+  MAX_CHAT_ATTACHMENTS,
   MAX_CHAT_MESSAGE,
   MAX_CHAT_TURNS,
   MAX_REQUEST_CHARS,
@@ -43,7 +44,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
     return fail(400, { code: 'invalid-request', error: 'The request could not be read.' })
   }
   if (!isChatRequest(body)) return fail(400, { code: 'invalid-request', error: 'The message could not be read.' })
-  if (body.turns.at(-1)!.text.length > MAX_CHAT_MESSAGE) {
+  if (body.turns.at(-1)!.text.length > MAX_CHAT_MESSAGE + MAX_CHAT_ATTACHMENTS) {
     return fail(400, { code: 'invalid-request', error: `Messages can be up to ${MAX_CHAT_MESSAGE} characters.` })
   }
   body.turns = body.turns.slice(-MAX_CHAT_TURNS)

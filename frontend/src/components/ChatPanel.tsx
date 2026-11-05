@@ -4,11 +4,27 @@
 // suggestions. The conversation is saved in .launchpad/chat.json.
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
-import { chatRequestSize, MAX_CHAT_MESSAGE, MAX_CHAT_TURNS, MAX_REQUEST_CHARS, type ChatRequest } from '../lib/aiApi'
+import {
+  chatRequestSize,
+  MAX_CHAT_MESSAGE,
+  MAX_CHAT_TURNS,
+  MAX_REQUEST_CHARS,
+  type ChatProposal,
+  type ChatRequest,
+} from '../lib/aiApi'
 import { applySuggestion, readHistory, undoSuggestion } from '../lib/aiChanges'
-import { AiRequestError, collectChatFiles, requestChat, savedWorkshopCode, saveWorkshopCode } from '../lib/aiClient'
-import { readChat, saveChat, toTurns, type ChatMessage } from '../lib/chatHistory'
-import { currentPreviewPath } from '../lib/highlight'
+import {
+  AiRequestError,
+  collectChatFiles,
+  listComponentFiles,
+  requestChat,
+  savedWorkshopCode,
+  saveWorkshopCode,
+} from '../lib/aiClient'
+import { readChat, saveChat, toTurns, type ChatAttachment, type ChatMessage } from '../lib/chatHistory'
+import { onChatInbox, takeChatInbox, type ChatError } from '../lib/chatInbox'
+import { writeDraft, type DraftResult } from '../lib/drafts'
+import { currentPreviewBase, currentPreviewPath, highlightComponent, onPicked, requestPick } from '../lib/highlight'
 
 const STARTERS = [
   'Add a dark mode toggle button',
@@ -28,7 +44,56 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
   const [code, setCode] = useState(savedWorkshopCode)
   const [askCode, setAskCode] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  const [picking, setPicking] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // "Ask AI to fix" on a preview error: attach the error (it may have been sent before this panel opened).
+  useEffect(() => {
+    const receive = (error: ChatError | null) => {
+      if (!error) return
+      const attachment: ChatAttachment = {
+        kind: 'error',
+        errorKind: error.kind,
+        message: error.message.slice(0, 3000),
+        page: error.page,
+      }
+      setAttachments((current) => [...current.filter((a) => a.kind !== 'error'), attachment])
+      inputRef.current?.focus()
+    }
+    receive(takeChatInbox())
+    return onChatInbox(() => receive(takeChatInbox()))
+  }, [])
+
+  // A component picked in the preview.
+  useEffect(() => {
+    const off = onPicked((picked) => {
+      setPicking(false)
+      if (!picked) return
+      void listComponentFiles(dir)
+        .catch(() => [] as string[])
+        .then((files) => {
+          const file = files.find((path) => path.split('/').pop() === `${picked.name}.jsx`)
+          const attachment: ChatAttachment = { kind: 'component', name: picked.name, label: picked.label, file }
+          setAttachments((current) => [
+            ...current.filter((a) => !(a.kind === 'component' && a.name === picked.name)),
+            attachment,
+          ])
+          inputRef.current?.focus()
+        })
+    })
+    return () => {
+      off()
+      requestPick(false)
+    }
+  }, [dir])
+
+  function togglePick() {
+    const next = !picking
+    setPicking(next)
+    requestPick(next)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -58,7 +123,8 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
   const persist = () => saveChat(dir, messagesRef.current).catch(() => setNotice('Couldn’t save the chat to your folder.'))
 
   async function send(text: string, workshopCode = code) {
-    const message = text.trim()
+    const hasError = attachments.some((a) => a.kind === 'error')
+    const message = text.trim() || (hasError ? 'Please fix this error.' : '')
     if (!message || busy) return
     if (!workshopCode) {
       setAskCode(true)
@@ -73,7 +139,13 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
       return
     }
 
-    const user: ChatMessage = { id: crypto.randomUUID(), role: 'user', text: message }
+    const sent = attachments
+    const user: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      text: message,
+      ...(sent.length > 0 ? { attachments: sent } : {}),
+    }
     const reply: ChatMessage = { id: crypto.randomUUID(), role: 'assistant', text: '' }
     const history = [...messagesRef.current, user]
     const request: ChatRequest = {
@@ -92,6 +164,7 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
     }
 
     setDraft('')
+    setAttachments([])
     commit([...history, reply])
     void persist()
     setBusy({ status: 'Thinking…', chars: 0 })
@@ -109,7 +182,8 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
         setAskCode(true)
         // Take the message back so it can be sent again with the right code.
         commit(messagesRef.current.filter((m) => m.id !== user.id && m.id !== reply.id))
-        setDraft(message)
+        setDraft(text)
+        setAttachments(sent)
       } else {
         patch(reply.id, { error: error instanceof Error ? error.message : String(error) })
       }
@@ -178,6 +252,13 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
             message.role === 'user' ? (
               <div key={message.id} className="chat-msg user">
                 {message.text}
+                {message.attachments && message.attachments.length > 0 && (
+                  <div className="chat-chips">
+                    {message.attachments.map((attachment, i) => (
+                      <AttachmentChip key={i} attachment={attachment} />
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div key={message.id} className="chat-msg assistant">
@@ -194,6 +275,7 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
                 {message.error && <p className="notice">{message.error}</p>}
                 {message.proposal && (
                   <ProposalCard
+                    dir={dir}
                     message={message}
                     onApply={() => void apply(message)}
                     onUndo={() => void undo(message)}
@@ -236,11 +318,27 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
             void send(draft)
           }}
         >
+          {attachments.length > 0 && (
+            <div className="chat-chips">
+              {attachments.map((attachment, i) => (
+                <AttachmentChip
+                  key={i}
+                  attachment={attachment}
+                  onRemove={() => setAttachments((current) => current.filter((a) => a !== attachment))}
+                />
+              ))}
+            </div>
+          )}
           <textarea
+            ref={inputRef}
             value={draft}
             maxLength={MAX_CHAT_MESSAGE}
             rows={3}
-            placeholder="Ask AI about your site…  (Enter to send, Shift+Enter for a new line)"
+            placeholder={
+              attachments.some((a) => a.kind === 'error')
+                ? 'Press Send to ask AI to fix it, or add a note…'
+                : 'Ask AI about your site…  (Enter to send, Shift+Enter for a new line)'
+            }
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -250,12 +348,26 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
             }}
           />
           <div className="chat-input-bar">
+            <button
+              type="button"
+              className={picking ? 'button pressed' : 'button'}
+              aria-pressed={picking}
+              title="Click a part of the preview to show AI what you mean"
+              onClick={togglePick}
+            >
+              {picking ? 'Click the page… (Cancel)' : '🎯 Pick from page'}
+            </button>
+            <span className="chat-spacer" />
             {messages.length > 0 && (
               <button type="button" className="link-button" onClick={clear} disabled={!!busy}>
                 New chat
               </button>
             )}
-            <button type="submit" className="button primary" disabled={!!busy || !draft.trim()}>
+            <button
+              type="submit"
+              className="button primary"
+              disabled={!!busy || (!draft.trim() && !attachments.some((a) => a.kind === 'error'))}
+            >
               {busy ? 'Working…' : 'Send'}
             </button>
           </div>
@@ -265,15 +377,35 @@ export function ChatPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
   )
 }
 
-function ProposalCard(props: { message: ChatMessage; onApply(): void; onUndo(): void; onDiscard(): void }) {
-  const { message, onApply, onUndo, onDiscard } = props
+interface ProposalCardProps {
+  dir: FileSystemDirectoryHandle
+  message: ChatMessage
+  onApply(): void
+  onUndo(): void
+  onDiscard(): void
+}
+
+function ProposalCard({ dir, message, onApply, onUndo, onDiscard }: ProposalCardProps) {
   const proposal = message.proposal!
   const state = message.proposalState ?? 'pending'
+  const canPreview = Boolean(proposal.preview?.jsx)
+  const [tab, setTab] = useState<'preview' | 'code'>(canPreview && state === 'pending' ? 'preview' : 'code')
   return (
     <div className={`chat-proposal ${state}`}>
       <h4>✨ Proposed change</h4>
       <p>{proposal.summary}</p>
-      <ul className="ai-changes">
+      {canPreview && (
+        <div className="chat-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === 'preview'} onClick={() => setTab('preview')}>
+            👀 Preview
+          </button>
+          <button type="button" role="tab" aria-selected={tab === 'code'} onClick={() => setTab('code')}>
+            📄 Code
+          </button>
+        </div>
+      )}
+      {canPreview && tab === 'preview' && <DraftPreview dir={dir} id={message.id} proposal={proposal} />}
+      <ul className="ai-changes" hidden={canPreview && tab === 'preview'}>
         {proposal.changes.map((change) => {
           const file = proposal.files.find((f) => f.path === change.path)
           return (
@@ -379,4 +511,87 @@ function inline(text: string): ReactNode[] {
     if (piece.startsWith('**') && piece.endsWith('**') && piece.length > 3) return <strong key={i}>{piece.slice(2, -2)}</strong>
     return piece
   })
+}
+
+/** The proposal's example, rendered on its own from draft files in the container (lib/drafts.ts). */
+function DraftPreview({ dir, id, proposal }: { dir: FileSystemDirectoryHandle; id: string; proposal: ChatProposal }) {
+  const [result, setResult] = useState<DraftResult | { ok: null } | null>(null)
+  const [version, setVersion] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const base = currentPreviewBase()
+    const done = (next: DraftResult | { ok: null }) => !cancelled && setResult(next)
+    if (!base) done({ ok: null })
+    else
+      writeDraft(dir, id, proposal).then(done, (error: unknown) =>
+        done({ ok: false, reason: `Couldn’t prepare the preview: ${String(error)}` }),
+      )
+    return () => {
+      cancelled = true
+    }
+  }, [dir, id, proposal, version])
+
+  const base = currentPreviewBase()
+  return (
+    <div className="draft-preview">
+      {result === null ? (
+        <div className="ai-working">
+          <div className="spinner small" aria-hidden="true" />
+          <span>Preparing the preview…</span>
+        </div>
+      ) : result.ok === null || !base ? (
+        <p className="ai-file">The preview appears once your project is running.</p>
+      ) : result.ok ? (
+        <div className="draft-frame">
+          <iframe key={version} src={new URL(result.path, base).href} title="Preview of the proposed change" />
+        </div>
+      ) : (
+        <p className="notice">{result.reason}</p>
+      )}
+      <div className="draft-caption">
+        <code>{proposal.preview!.jsx.trim()}</code>
+        <button type="button" className="link-button" onClick={() => setVersion((v) => v + 1)}>
+          ↻ Reload
+        </button>
+      </div>
+      <p className="ai-file">
+        Shown on its own, before applying (your site’s JavaScript doesn’t run here). Apply to see it on your page.
+      </p>
+    </div>
+  )
+}
+
+function AttachmentChip({ attachment, onRemove }: { attachment: ChatAttachment; onRemove?(): void }) {
+  if (attachment.kind === 'component') {
+    return (
+      <span className="chat-chip">
+        <button
+          type="button"
+          className="chat-chip-label"
+          title={`${attachment.label}${attachment.file ? `\n${attachment.file}` : ''}\nClick to show it on the page`}
+          onClick={() => highlightComponent(attachment.name)}
+        >
+          🧩 {attachment.name}
+        </button>
+        {onRemove && (
+          <button type="button" className="chat-chip-remove" aria-label="Remove" onClick={onRemove}>
+            ×
+          </button>
+        )}
+      </span>
+    )
+  }
+  return (
+    <span className="chat-chip error" title={attachment.message}>
+      <span className="chat-chip-label">
+        ⚠️ {attachment.errorKind === 'build' ? 'Build error' : 'Page error'}: {attachment.message.split('\n')[0].slice(0, 60)}
+      </span>
+      {onRemove && (
+        <button type="button" className="chat-chip-remove" aria-label="Remove" onClick={onRemove}>
+          ×
+        </button>
+      )}
+    </span>
+  )
 }

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import './App.css'
 import { GuidePanel } from './components/GuidePanel'
 import { PreviewPane } from './components/PreviewPane'
+import { sendErrorToChat } from './lib/chatInbox'
 import { ResizeHandle } from './components/ResizeHandle'
 import { TerminalDrawer } from './components/TerminalDrawer'
 import { browserSupported, Welcome, type ConvertTarget, type Prompt } from './components/Welcome'
@@ -404,6 +405,11 @@ function App() {
               hint={phase === 'installing' ? 'The first install takes about 10–30 seconds.' : null}
               onFullView={() => setExpanded(true)}
               onEscape={() => setExpanded(false)}
+              onAskAiToFix={(error) => {
+                sendErrorToChat(error)
+                setExpanded(false)
+                selectStep('w4', 'chat')
+              }}
             />
           )}
           {isExpanded && (

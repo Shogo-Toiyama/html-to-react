@@ -141,6 +141,27 @@ export function validateChatProposal(request: ChatRequest, proposal: ChatProposa
   for (const file of proposal.files) final.set(file.path, file.content)
   errors.push(...checkCode(proposal.files, (path) => final.has(path)))
 
+  // The example used to show a component on its own (optional).
+  if (proposal.preview) {
+    const { component, jsx } = proposal.preview
+    if (typeof component !== 'string' || typeof jsx !== 'string') {
+      errors.push('preview needs component and jsx (or leave preview out).')
+    } else {
+      try {
+        JsxParser.parse(`const example = (<>\n${jsx}\n</>)`, { ecmaVersion: 'latest', sourceType: 'module' })
+      } catch (error) {
+        errors.push(`preview.jsx must be JSX elements only: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      for (const tag of matches(jsx, /<([A-Z]\w*)/g)) {
+        const defined = [...final].some(
+          ([path, content]) =>
+            path.endsWith(`/${tag}.jsx`) || new RegExp(`export\\s+default\\s+(?:function\\s+)?${tag}\\b`).test(content),
+        )
+        if (!defined) errors.push(`preview.jsx uses <${tag}>, but no file exports it as default.`)
+      }
+    }
+  }
+
   // New packages would need an install; not supported in the workshop.
   const pkg = request.files.find((file) => file.path === 'package.json')
   let installed = new Set<string>()
