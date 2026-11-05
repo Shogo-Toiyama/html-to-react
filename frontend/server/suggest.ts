@@ -16,14 +16,14 @@ export type ModelTask = AiStep | 'chat'
  * Which model each task uses by default. Change one line here to switch a step, or set an
  * environment variable (`MODEL_COMPONENTS`, `MODEL_PROPS`, `MODEL_TAILWIND`,
  * `MODEL_TAILWIND_CLEANUP`, `MODEL_CHAT`) to a model id or `haiku` / `sonnet` without redeploying code.
- * Tested on the sample site (model-lab/): Haiku matched Sonnet on all four steps, at ~1/10 the cost.
- * The chat has not been tested with Haiku.
+ * Tested on the sample site (model-lab/): Haiku matched the original's look on all four steps, at ~1/10 of
+ * Sonnet's cost, so Steps 2-4 use Haiku. The chat (Step 5) has not been tested with Haiku and stays on Sonnet.
  */
 export const DEFAULT_MODELS: Record<ModelTask, string> = {
-  components: SONNET,
-  props: SONNET,
-  tailwind: SONNET,
-  'tailwind-cleanup': SONNET,
+  components: HAIKU,
+  props: HAIKU,
+  tailwind: HAIKU,
+  'tailwind-cleanup': HAIKU,
   chat: SONNET,
 }
 

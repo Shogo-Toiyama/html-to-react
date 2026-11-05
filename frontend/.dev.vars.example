@@ -1,9 +1,9 @@
 # Copy to .dev.vars for `npm run dev:pages` (never commit .dev.vars).
 ANTHROPIC_API_KEY=sk-ant-...
 WORKSHOP_CODE=buildwithai
-# Optional: pick the model per step (a model id, or "haiku" / "sonnet"). Default: see DEFAULT_MODELS in server/suggest.ts.
-# MODEL_COMPONENTS=haiku
-# MODEL_PROPS=haiku
-# MODEL_TAILWIND=haiku
-# MODEL_TAILWIND_CLEANUP=haiku
-# MODEL_CHAT=sonnet
+# Optional: pick the model per step (a model id, or "haiku" / "sonnet"). Default (see DEFAULT_MODELS in server/suggest.ts): Haiku for Steps 2-4, Sonnet for the chat.
+# MODEL_COMPONENTS=sonnet
+# MODEL_PROPS=sonnet
+# MODEL_TAILWIND=sonnet
+# MODEL_TAILWIND_CLEANUP=sonnet
+# MODEL_CHAT=haiku
