@@ -6,6 +6,7 @@
 // Render it with `key={previewUrl}` so a new dev server starts from a clean state.
 
 import { useEffect, useRef, useState } from 'react'
+import { onHighlightRequest } from '../lib/highlight'
 import { isPreviewMessage, type HostCommand, type HostMessage } from '../lib/previewBridge'
 import { previewTabUrl } from '../lib/previewTab'
 
@@ -66,6 +67,15 @@ export function PreviewPane(props: PreviewPaneProps) {
     const message: HostMessage = { source: 'launchpad-host', type: 'inspect', enabled: inspect }
     frameRef.current?.contentWindow?.postMessage(message, new URL(previewUrl).origin)
   }, [inspect, connected, previewUrl])
+
+  // The side panel asks to blink a component (lib/highlight.ts).
+  useEffect(() => {
+    if (!previewUrl) return
+    return onHighlightRequest((component) => {
+      const message: HostMessage = { source: 'launchpad-host', type: 'highlight', component }
+      frameRef.current?.contentWindow?.postMessage(message, new URL(previewUrl).origin)
+    })
+  }, [previewUrl])
 
   const reload = () => {
     // Without the bridge (e.g. a project that doesn't use Vite), reloading the iframe is all we can do.

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { WHOLE_SITE } from '../lib/aiApi'
 import { readHistory, type AiHistoryEntry } from '../lib/aiChanges'
 import { listComponentFiles } from '../lib/aiClient'
+import { highlightComponent } from '../lib/highlight'
 import { checkTailwind, isTailwindReady, setupTailwind, type SetupResult, type TailwindStatus } from '../lib/tailwindSetup'
 import { AiSuggest } from './AiSuggest'
 
@@ -94,12 +95,22 @@ export function TailwindPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
 
       <div className="tw-scope" role="radiogroup" aria-label="What to convert">
         <label>
-          <input type="radio" checked={scope === 'component'} onChange={() => setScope('component')} />
+          <input
+            type="radio"
+            checked={scope === 'component'}
+            onChange={() => {
+              setScope('component')
+              if (target) highlightComponent(name(target))
+            }}
+          />
           One component
           <select
             value={target}
             disabled={scope !== 'component'}
-            onChange={(event) => setTarget(event.target.value)}
+            onChange={(event) => {
+              setTarget(event.target.value)
+              highlightComponent(name(event.target.value))
+            }}
             aria-label="Component"
           >
             {files.map((file) => (
@@ -109,6 +120,16 @@ export function TailwindPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
               </option>
             ))}
           </select>
+          {scope === 'component' && target && (
+            <button
+              type="button"
+              className="button tw-show"
+              title="Show where this component is on the page"
+              onClick={() => highlightComponent(name(target))}
+            >
+              Show
+            </button>
+          )}
         </label>
         <label>
           <input type="radio" checked={scope === 'site'} onChange={() => setScope('site')} />
@@ -126,7 +147,7 @@ export function TailwindPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
           copy={{
             title: `Ask AI to convert ${name(target)}`,
             button: `Convert ${name(target)}`,
-            intro: `Claude replaces the CSS that styles ${name(target)} with Tailwind classes in its JSX. Compare the className before and after!`,
+            intro: `AI replaces the CSS that styles ${name(target)} with Tailwind classes in its JSX. Compare the className before and after!`,
           }}
         />
       )}
@@ -141,7 +162,7 @@ export function TailwindPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
             title: 'Ask AI to convert the whole site',
             button: 'Convert the whole site',
             intro:
-              'Claude replaces the CSS for every component and page with Tailwind classes. Your CSS files stay as they are; you can delete what’s unused afterwards.',
+              'AI replaces the CSS for every component and page with Tailwind classes. Your CSS files stay as they are; you can delete what’s unused afterwards.',
           }}
         />
       )}
@@ -156,7 +177,7 @@ export function TailwindPanel({ dir }: { dir: FileSystemDirectoryHandle }) {
             title: 'Delete CSS that isn’t needed anymore?',
             button: 'Find unused CSS',
             intro:
-              '🎉 Everything uses Tailwind classes now! Claude can find the CSS rules nothing uses anymore and delete them.',
+              '🎉 Everything uses Tailwind classes now! AI can find the CSS rules nothing uses anymore and delete them.',
           }}
         />
       )}

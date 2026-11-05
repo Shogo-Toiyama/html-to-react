@@ -768,3 +768,9 @@
   width: 26px;
   height: 26px;
 }
+
+.tw-show {
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 400;
+}

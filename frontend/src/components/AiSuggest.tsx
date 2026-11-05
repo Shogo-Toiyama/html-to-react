@@ -17,12 +17,12 @@ const COPY: Record<'components' | 'props', AiCopy> = {
   components: {
     title: 'Ask AI to split your page',
     button: 'Suggest components',
-    intro: 'Claude looks at your page and suggests how to split it into components, each big one in its own file.',
+    intro: 'AI looks at your page and suggests how to split it into components, each big one in its own file.',
   },
   props: {
     title: 'Ask AI to use props',
     button: 'Suggest props',
-    intro: 'Claude finds parts that repeat and turns each into one component that takes props.',
+    intro: 'AI finds parts that repeat and turns each into one component that takes props.',
   },
 }
 

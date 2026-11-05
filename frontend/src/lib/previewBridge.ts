@@ -26,6 +26,8 @@ export type HostCommand =
   | { type: 'back' | 'forward' | 'reload' }
   /** Outline the React component under the mouse. */
   | { type: 'inspect'; enabled: boolean }
+  /** Blink every instance of a component (by name) twice. */
+  | { type: 'highlight'; component: string }
 
 /** Messages from Launchpad to the preview. */
 export type HostMessage = HostCommand & { source: 'launchpad-host' }
@@ -73,6 +75,8 @@ const BRIDGE_SCRIPT = `;(() => {
     } else if (message.type === 'inspect') {
       inspecting = message.enabled
       if (!inspecting) hide()
+    } else if (message.type === 'highlight') {
+      highlight(message.component)
     }
   })
 
@@ -155,6 +159,46 @@ const BRIDGE_SCRIPT = `;(() => {
   }, true)
   window.addEventListener('scroll', () => inspecting && lastTarget && show(lastTarget), true)
   document.addEventListener('mouseleave', hide)
+
+  // ---- Highlight: blink every instance of one component twice ----
+  const instancesOf = (name) => {
+    const rootEl = document.getElementById('root')
+    const key = rootEl && Object.keys(rootEl).find((k) => k.startsWith('__reactContainer$'))
+    if (!key) return []
+    const found = []
+    const visit = (fiber) => {
+      for (let f = fiber; f; f = f.sibling) {
+        const type = f.type
+        if (typeof type === 'function' && (type.displayName || type.name) === name) found.push(f)
+        else visit(f.child)
+      }
+    }
+    // The root's "current" tree is the one on screen.
+    visit(rootEl[key].stateNode.current.child)
+    return found
+  }
+  const highlight = (name) => {
+    const elements = instancesOf(name).flatMap(topElements)
+    if (elements.length === 0) return
+    const onScreen = (el) => {
+      const r = el.getBoundingClientRect()
+      return r.bottom > 0 && r.top < innerHeight && (r.width || r.height)
+    }
+    const scrolled = !elements.some(onScreen)
+    if (scrolled) elements[0].scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setTimeout(() => {
+      for (const el of elements) {
+        const r = el.getBoundingClientRect()
+        if (!r.width && !r.height) continue
+        const flash = document.createElement('div')
+        flash.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;border-radius:4px;outline:3px solid #fe8d3c;background:rgba(254,141,60,0.25);opacity:0'
+        Object.assign(flash.style, { left: r.left - 3 + 'px', top: r.top - 3 + 'px', width: r.width + 6 + 'px', height: r.height + 6 + 'px' })
+        document.documentElement.appendChild(flash)
+        const blink = flash.animate([{ opacity: 0 }, { opacity: 1 }, { opacity: 0 }, { opacity: 1 }, { opacity: 0 }], { duration: 1400, easing: 'ease-in-out' })
+        blink.onfinish = () => flash.remove()
+      }
+    }, scrolled ? 450 : 0)
+  }
 
   report()
 })()

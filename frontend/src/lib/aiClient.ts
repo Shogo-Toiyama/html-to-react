@@ -152,5 +152,5 @@ export async function requestSuggestion(
     }
     if (done) break
   }
-  throw new AiRequestError({ code: 'ai-failed', error: 'The connection closed before Claude finished. Please try again.' })
+  throw new AiRequestError({ code: 'ai-failed', error: 'The connection closed before AI finished. Please try again.' })
 }
