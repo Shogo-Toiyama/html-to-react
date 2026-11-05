@@ -1,11 +1,14 @@
-// Talks to the backend (functions/api/suggest.ts): gathers the project's files,
-// sends them, and streams progress back.
+// Talks to the backend (functions/api/suggest.ts and chat.ts): gathers the
+// project's files, sends them, and streams progress back.
 
 import {
   DEVICE_ID_HEADER,
   WORKSHOP_CODE_HEADER,
   type AiStep,
   type ApiError,
+  type ChatEvent,
+  type ChatProposal,
+  type ChatRequest,
   type ProjectFile,
   type SuggestRequest,
   type Suggestion,
@@ -112,16 +115,75 @@ export async function requestSuggestion(
   workshopCode: string,
   onProgress: (progress: SuggestProgress) => void,
 ): Promise<{ suggestion: Suggestion; model: string }> {
+  let result: { suggestion: Suggestion; model: string } | null = null
+  type SuggestEvent =
+    | SuggestProgress
+    | { type: 'result'; suggestion: Suggestion; model: string }
+    | { type: 'error'; code: ApiError['code']; error: string }
+  await postStream<SuggestEvent>('/api/suggest', request, workshopCode, (event) => {
+    if (event.type === 'result') result = { suggestion: event.suggestion, model: event.model }
+    else if (event.type === 'error') throw new AiRequestError({ code: event.code, error: event.error })
+    else onProgress(event)
+  })
+  if (!result) throw closedEarly()
+  return result
+}
+
+/**
+ * The project's code for the chat: everything in src/ that's text, plus
+ * package.json (so the AI knows which packages are installed).
+ */
+export async function collectChatFiles(dir: FileSystemDirectoryHandle): Promise<ProjectFile[]> {
+  const snapshot = await scanFolder(dir)
+  const decoder = new TextDecoder()
+  const paths = [...snapshot.keys()]
+    .filter((path) => path === 'package.json' || (path.startsWith('src/') && /\.(jsx|js|css|json)$/.test(path)))
+    .sort()
+  return Promise.all(paths.map(async (path) => ({ path, content: decoder.decode(await readBytes(snapshot.get(path)!)) })))
+}
+
+export interface ChatHandlers {
+  onText(delta: string): void
+  onStatus(message: string): void
+  onProgress(chars: number): void
+}
+
+/** Sends a chat message; streams the reply to `handlers` and resolves with the proposal, if any. */
+export async function requestChat(
+  request: ChatRequest,
+  workshopCode: string,
+  handlers: ChatHandlers,
+): Promise<{ proposal: ChatProposal; model: string } | null> {
+  let proposal: { proposal: ChatProposal; model: string } | null = null
+  let done = false
+  await postStream<ChatEvent>('/api/chat', request, workshopCode, (event) => {
+    if (event.type === 'text') handlers.onText(event.delta)
+    else if (event.type === 'status') handlers.onStatus(event.message)
+    else if (event.type === 'progress') handlers.onProgress(event.chars)
+    else if (event.type === 'proposal') proposal = { proposal: event.proposal, model: event.model }
+    else if (event.type === 'done') done = true
+    else if (event.type === 'error') throw new AiRequestError({ code: event.code, error: event.error })
+  })
+  if (!done) throw closedEarly()
+  return proposal
+}
+
+function closedEarly() {
+  return new AiRequestError({ code: 'ai-failed', error: 'The connection closed before AI finished. Please try again.' })
+}
+
+/** POSTs `body` and calls `onEvent` for each line of the NDJSON reply until the stream ends. */
+async function postStream<E>(url: string, body: unknown, workshopCode: string, onEvent: (event: E) => void) {
   let response: Response
   try {
-    response = await fetch('/api/suggest', {
+    response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         [WORKSHOP_CODE_HEADER]: workshopCode,
         [DEVICE_ID_HEADER]: deviceId(),
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(body),
     })
   } catch {
     throw new AiRequestError({ code: 'ai-failed', error: 'Couldn’t reach the server. Check your internet connection.' })
@@ -134,7 +196,6 @@ export async function requestSuggestion(
     throw new AiRequestError(info ?? { code: 'ai-failed', error: `Server error (${response.status}).` })
   }
 
-  // One JSON event per line.
   const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader()
   let buffer = ''
   for (;;) {
@@ -144,13 +205,8 @@ export async function requestSuggestion(
     while ((newline = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, newline).trim()
       buffer = buffer.slice(newline + 1)
-      if (!line) continue
-      const event = JSON.parse(line)
-      if (event.type === 'result') return { suggestion: event.suggestion, model: event.model }
-      if (event.type === 'error') throw new AiRequestError({ code: event.code, error: event.error })
-      onProgress(event)
+      if (line) onEvent(JSON.parse(line) as E)
     }
-    if (done) break
+    if (done) return
   }
-  throw new AiRequestError({ code: 'ai-failed', error: 'The connection closed before AI finished. Please try again.' })
 }

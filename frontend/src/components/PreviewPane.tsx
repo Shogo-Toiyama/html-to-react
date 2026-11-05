@@ -6,7 +6,7 @@
 // Render it with `key={previewUrl}` so a new dev server starts from a clean state.
 
 import { useEffect, useRef, useState } from 'react'
-import { onHighlightRequest } from '../lib/highlight'
+import { onHighlightRequest, setPreviewPath } from '../lib/highlight'
 import { isPreviewMessage, type HostCommand, type HostMessage } from '../lib/previewBridge'
 import { previewTabUrl } from '../lib/previewTab'
 
@@ -43,6 +43,7 @@ export function PreviewPane(props: PreviewPaneProps) {
       setConnected(true)
       if (event.data.type === 'location') {
         setPath(event.data.path)
+        setPreviewPath(event.data.path)
         // A reloaded page starts with the inspector off; turn it back on.
         if (inspectRef.current) {
           const message: HostMessage = { source: 'launchpad-host', type: 'inspect', enabled: true }
@@ -53,7 +54,10 @@ export function PreviewPane(props: PreviewPaneProps) {
       }
     }
     window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
+    return () => {
+      window.removeEventListener('message', onMessage)
+      setPreviewPath(null)
+    }
   }, [])
 
   const send = (command: HostCommand) => {

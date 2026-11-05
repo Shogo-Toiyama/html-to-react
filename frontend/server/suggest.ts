@@ -18,7 +18,7 @@ export type SuggestEvent =
 
 export class SuggestError extends Error {}
 
-/** Tokens and cost of one /api/suggest call, summed over its attempts (for the logs). */
+/** Tokens and cost of one /api/suggest or /api/chat call, summed over its attempts (for the logs). */
 export interface SuggestUsage {
   attempts: number
   /** Models that answered (a fallback model may appear after a decline). */
@@ -41,7 +41,7 @@ export function emptyUsage(): SuggestUsage {
   return { attempts: 0, models: [], inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 }
 }
 
-function addUsage(total: SuggestUsage, message: Anthropic.Beta.BetaMessage) {
+export function addUsage(total: SuggestUsage, message: Anthropic.Beta.BetaMessage) {
   const u = message.usage
   const cacheRead = u.cache_read_input_tokens ?? 0
   const cacheWrite = u.cache_creation_input_tokens ?? 0

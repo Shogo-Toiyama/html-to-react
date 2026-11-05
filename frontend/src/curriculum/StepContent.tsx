@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react'
 import { AiSuggest } from '../components/AiSuggest'
+import { ChatPanel } from '../components/ChatPanel'
 import { TailwindPanel } from '../components/TailwindPanel'
 
 export interface ConversionSummary {
@@ -30,6 +31,7 @@ const CONTENT: Record<string, (ctx: StepContext) => ReactNode> = {
   'w4/components': ComponentsStep,
   'w4/props': PropsStep,
   'w4/tailwind': TailwindStep,
+  'w4/chat': ChatStep,
 }
 
 export function StepContent({ workshop, step, ctx }: { workshop: string; step: string; ctx: StepContext }) {
@@ -278,6 +280,29 @@ function TailwindStep(ctx: StepContext) {
         Pick an element, add Tailwind classes to its <code>className</code>, save, and watch the preview. Then delete
         the CSS rule it no longer needs.
       </p>
+    </>
+  )
+}
+
+function ChatStep(ctx: StepContext) {
+  return (
+    <>
+      <p>
+        Now build whatever you want. Tell AI what to add or change; it explains the React idea behind it and proposes the
+        code. Nothing changes until you press <strong>Apply</strong>, and <strong>Undo</strong> puts it back.
+      </p>
+      <ul>
+        <li>Ask for one small thing at a time.</li>
+        <li>After applying, open the files in VS Code and read what changed. Try tweaking it yourself!</li>
+        <li>
+          Not sure how something works? Ask “why?” or “explain this”.
+        </li>
+      </ul>
+      {ctx.project ? (
+        <ChatPanel key={ctx.project.dir.name} dir={ctx.project.dir} />
+      ) : (
+        <p className="guide-aside">Open your React project to start chatting.</p>
+      )}
     </>
   )
 }

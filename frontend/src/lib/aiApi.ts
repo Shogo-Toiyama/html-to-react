@@ -82,3 +82,49 @@ export const DEVICE_ID_HEADER = 'X-Device-Id'
 export function requestSize(request: SuggestRequest): number {
   return [...request.editable, ...request.context].reduce((sum, file) => sum + file.content.length, 0)
 }
+
+// ---- Step 5: chat (POST /api/chat) ----
+
+/** Steps recorded in the change log: the AI steps above, plus changes proposed in the chat. */
+export type HistoryStep = AiStep | 'chat'
+
+export interface ChatTurn {
+  role: 'user' | 'assistant'
+  text: string
+}
+
+export interface ChatRequest {
+  /** The conversation so far, oldest first; the last turn is the participant's new message. */
+  turns: ChatTurn[]
+  /** The project's current code (src/, package.json). The AI may change files in src/. */
+  files: ProjectFile[]
+  /** The page open in the preview, e.g. `/about`. */
+  page?: string
+}
+
+/** A code change proposed in the chat. Applied, undone and logged like a Suggestion. */
+export interface ChatProposal extends Suggestion {
+  /**
+   * How to show a new or changed component on its own, e.g.
+   * `{ component: 'LikeButton', jsx: '<LikeButton label="Like" />' }`. Not shown yet (planned).
+   */
+  preview?: { component: string; jsx: string } | null
+}
+
+/** Events streamed by /api/chat, one JSON object per line. */
+export type ChatEvent =
+  | { type: 'text'; delta: string }
+  | { type: 'status'; message: string }
+  | { type: 'progress'; chars: number }
+  | { type: 'proposal'; proposal: ChatProposal; model: string }
+  | { type: 'done' }
+  | { type: 'error'; error: string; code: 'ai-failed' }
+
+/** Longest message a participant can send (characters). */
+export const MAX_CHAT_MESSAGE = 2000
+/** Most turns sent with each message; older ones are left out. */
+export const MAX_CHAT_TURNS = 16
+
+export function chatRequestSize(request: ChatRequest): number {
+  return request.files.reduce((sum, file) => sum + file.content.length, 0)
+}

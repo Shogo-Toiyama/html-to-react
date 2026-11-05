@@ -3,14 +3,14 @@
 // `.launchpad/backups/<id>/`. Every applied suggestion is recorded in
 // `.launchpad/history.json` (and localStorage) with what changed and why.
 
-import type { AiStep, FileChange, SuggestedComponent, Suggestion } from './aiApi'
+import type { FileChange, HistoryStep, SuggestedComponent, Suggestion } from './aiApi'
 import { deleteLocalFile, fileExists, readTextFile, writeLocalFile } from './localFolder'
 
 export interface AiHistoryEntry {
   id: string
   /** ISO time it was applied. */
   appliedAt: string
-  step: AiStep
+  step: HistoryStep
   /** For `tailwind`: the converted file, or `*` for the whole site. */
   target?: string
   model: string
@@ -56,7 +56,7 @@ async function saveHistory(dir: FileSystemDirectoryHandle, entries: AiHistoryEnt
 
 export async function applySuggestion(
   dir: FileSystemDirectoryHandle,
-  step: AiStep,
+  step: HistoryStep,
   model: string,
   suggestion: Suggestion,
   target?: string,

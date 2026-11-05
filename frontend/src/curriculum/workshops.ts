@@ -69,6 +69,12 @@ export const WORKSHOPS: Workshop[] = [
         goal: 'Style your components with classes right inside the JSX.',
         needs: 'react-project',
       },
+      {
+        id: 'chat',
+        title: 'Build with AI',
+        goal: 'Ask AI to add features to your site, then read how it did it.',
+        needs: 'react-project',
+      },
     ],
   },
   {
